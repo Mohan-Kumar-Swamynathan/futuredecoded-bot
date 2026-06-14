@@ -22,6 +22,8 @@ from futuredecoded.media.visual_collector import collect_visuals
 from futuredecoded.media.voice_engine import synthesise_voice
 from futuredecoded.publish.social_publisher import publish_social_posts
 from futuredecoded.publish.youtube_uploader import upload_video
+from futuredecoded.seo.chapter_builder import build_chapters_from_sections
+from futuredecoded.seo.description_formatter import build_long_form_description, build_shorts_description
 from futuredecoded.seo.seo_engine import enrich_seo
 
 logger = logging.getLogger("futuredecoded.pipeline")
@@ -35,6 +37,16 @@ class PipelineResult:
     long_video_id: str | None = None
     short_video_id: str | None = None
     error: str = ""
+
+
+def _build_visual_keywords(story_title: str) -> list[str]:
+    title_words = [word for word in story_title.split() if len(word) > 3][:4]
+    return title_words + ["artificial intelligence", "technology", "business news", "AI regulation"]
+
+
+def _save_description(output_dir: Path, filename: str, description: str) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / filename).write_text(description, encoding="utf-8")
 
 
 def _slugify(text: str) -> str:
@@ -67,14 +79,29 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
     sources = [source.get("url", story.url) for source in fact_result.sources]
     seo = enrich_seo(story.title, scripts.script_long, scripts.script_short, sources, output_dir)
 
-    keywords = [story.title.split()[0], "AI news", "tech news"]
+    keywords = _build_visual_keywords(story.title)
     visuals = collect_visuals(topic_slug, keywords)
+    hero_image = visuals[0] if visuals else None
 
     long_video_id = None
     short_video_id = None
 
     if content_format in (ContentFormat.LONG, ContentFormat.BOTH):
-        voice_long, _ = synthesise_voice(scripts.script_long, output_dir / "voice_long.mp3")
+        voice_long, duration_long = synthesise_voice(scripts.script_long, output_dir / "voice_long.mp3")
+        chapters_long = build_chapters_from_sections(
+            scripts.script_sections,
+            duration_long,
+            fallback_script=scripts.script_long,
+            format_type="long",
+        )
+        long_description = build_long_form_description(
+            intro=seo.long_form.get("intro", story.title),
+            key_points=seo.long_form.get("key_points", []),
+            chapters=chapters_long,
+            sources=sources,
+            hashtags=seo.long_form.get("hashtags"),
+        )
+        _save_description(output_dir, "description_long.txt", long_description)
         srt_long = voice_long.with_suffix(".srt")
         video_long = build_long_video(
             scripts.script_long, voice_long, visuals,
@@ -84,12 +111,13 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
             video_long or output_dir / "video_long.mp4",
             seo.long_form.get("title", story.title)[:20],
             output_dir / "thumbnail_long.png",
+            hero_image=hero_image,
         )
         if upload and video_long:
             long_video_id = upload_video(
                 video_path=video_long,
                 title=seo.long_form.get("title", story.title),
-                description=seo.long_form.get("description", ""),
+                description=long_description,
                 tags=seo.long_form.get("tags", []),
                 thumbnail_path=thumb_long,
                 format_type="long",
@@ -99,7 +127,21 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
                 store_analytics_snapshot(long_video_id, {"views": 0, "ctr": 0.0, "retention": 0.0})
 
     if content_format in (ContentFormat.SHORT, ContentFormat.BOTH):
-        voice_short, _ = synthesise_voice(scripts.script_short, output_dir / "voice_short.mp3")
+        voice_short, duration_short = synthesise_voice(scripts.script_short, output_dir / "voice_short.mp3")
+        chapters_short = build_chapters_from_sections(
+            scripts.script_short_sections,
+            duration_short,
+            fallback_script=scripts.script_short,
+            format_type="short",
+        )
+        shorts_description = build_shorts_description(
+            hook=seo.shorts.get("hook", story.title),
+            key_points=seo.shorts.get("key_points", []),
+            sources=sources,
+            hashtags=seo.shorts.get("hashtags"),
+            chapters=chapters_short,
+        )
+        _save_description(output_dir, "description_short.txt", shorts_description)
         srt_short = voice_short.with_suffix(".srt")
         video_short = build_short_video(
             scripts.script_short, voice_short, visuals,
@@ -109,12 +151,13 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
             video_short or output_dir / "video_short.mp4",
             seo.shorts.get("title", story.title)[:15],
             output_dir / "thumbnail_short.png",
+            hero_image=hero_image,
         )
         if upload and video_short:
             short_video_id = upload_video(
                 video_path=video_short,
                 title=seo.shorts.get("title", f"{story.title[:50]} #Shorts"),
-                description=seo.shorts.get("description", ""),
+                description=shorts_description,
                 tags=seo.shorts.get("tags", []),
                 thumbnail_path=thumb_short,
                 format_type="short",

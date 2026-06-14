@@ -43,16 +43,17 @@ Return JSON:
   "long_form": {{
     "title": "best title under 60 chars",
     "title_score": 0-100,
-    "description": "300+ words with summary, bullet points, timestamps/chapters, sources, CTA",
+    "intro": "2-3 sentence summary paragraph. Plain text only, no markdown.",
+    "key_points": ["bullet 1", "bullet 2", "bullet 3", "bullet 4"],
     "tags": ["15-20 tags"],
-    "hashtags": ["#AI", "#OpenAI"],
-    "chapters": [{{"time": "0:00", "label": "Hook"}}]
+    "hashtags": ["#AI", "#TechNews", "#FutureDecoded"]
   }},
   "shorts": {{
     "title": "title with #Shorts",
-    "description": "150 words hook + bullets + sources + CTA",
+    "hook": "1-2 sentence hook for Shorts description",
+    "key_points": ["point 1", "point 2", "point 3"],
     "tags": ["15 tags"],
-    "hashtags": ["#Shorts", "#AI"]
+    "hashtags": ["#Shorts", "#AI", "#TechNews"]
   }},
   "social": {{
     "x": "280 char post with link placeholder",
@@ -64,6 +65,11 @@ Return JSON:
     "secondary": ["long tail keywords"]
   }}
 }}
+
+Rules:
+- Do NOT include timestamps or chapters — those are added automatically later
+- Do NOT use escaped newline characters like \\n — use plain text only
+- No markdown formatting
 """
     result = llm.call_json(prompt)
     seo = SeoMetadata(
