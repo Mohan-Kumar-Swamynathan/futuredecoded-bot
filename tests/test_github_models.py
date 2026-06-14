@@ -32,6 +32,7 @@ def test_build_chain_uses_github_token_env(monkeypatch):
 @patch("futuredecoded.llm.provider_client.requests.post")
 def test_call_github_models_sends_correct_request(mock_post: MagicMock):
     mock_response = MagicMock()
+    mock_response.status_code = 200
     mock_response.json.return_value = {
         "choices": [{"message": {"content": '{"passed": true}'}}]
     }
@@ -52,6 +53,7 @@ def test_call_github_models_sends_correct_request(mock_post: MagicMock):
 @patch("futuredecoded.llm.provider_client.requests.post")
 def test_call_github_models_plain_text_omits_json_format(mock_post: MagicMock):
     mock_response = MagicMock()
+    mock_response.status_code = 200
     mock_response.json.return_value = {
         "choices": [{"message": {"content": "Hello world"}}]
     }

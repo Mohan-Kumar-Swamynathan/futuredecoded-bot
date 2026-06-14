@@ -9,7 +9,6 @@ import re
 from typing import Any, Optional
 
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger("futuredecoded.llm")
 
@@ -64,19 +63,22 @@ class ProviderClient:
             chain.append("openrouter")
         if self.openai_key:
             chain.append("openai")
-        chain.append("ollama")
+        if os.environ.get("GITHUB_ACTIONS") != "true":
+            chain.append("ollama")
         return chain
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     def call(self, prompt: str, max_tokens: int = 4096) -> str:
         errors: list[str] = []
         for provider in self._providers:
             try:
-                return self._dispatch(provider, prompt, max_tokens)
+                logger.info("LLM attempt: provider=%s", provider)
+                response = self._dispatch(provider, prompt, max_tokens)
+                logger.info("LLM success: provider=%s", provider)
+                return response
             except Exception as exc:
                 errors.append(f"{provider}: {exc}")
-                logger.warning("LLM provider %s failed: %s", provider, exc)
-        raise RuntimeError("All LLM providers failed: " + "; ".join(errors[:3]))
+                logger.warning("LLM provider %s failed: %s", provider, str(exc)[:200])
+        raise RuntimeError("All LLM providers failed: " + "; ".join(errors[:4]))
 
     def call_json(self, prompt: str) -> dict[str, Any]:
         json_prompt = (
@@ -141,6 +143,8 @@ class ProviderClient:
             json=payload,
             timeout=90,
         )
+        if resp.status_code >= 400:
+            logger.warning("GitHub Models error %s: %s", resp.status_code, resp.text[:300])
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
