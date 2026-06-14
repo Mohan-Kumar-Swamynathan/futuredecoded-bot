@@ -4,9 +4,28 @@ on:
   schedule:
     - cron: "30 2 * * *"  # 08:00 IST
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "requirements.txt"
+      - ".github/workflows/**"
 
 jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify Python syntax
+        run: python -m compileall -q src/futuredecoded
+
   pipeline:
+    needs: syntax-check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +41,11 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install edge-tts
+
+      - name: Verify imports
+        env:
+          PYTHONPATH: src
+        run: python -c "from futuredecoded.pipeline.orchestrator import run_daily_pipeline; print('imports ok')"
 
       - name: Restore YouTube credentials
         env:
@@ -48,8 +72,17 @@ jobs:
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          YOUTUBE_TOKEN_BASE64: ${{ secrets.YOUTUBE_TOKEN_BASE64 }}
+          CLIENT_SECRETS_BASE64: ${{ secrets.CLIENT_SECRETS_BASE64 }}
           TREND_SCORE_THRESHOLD: 80
-        run: python -m futuredecoded.main --daily --upload
+        run: |
+          if [ -n "$YOUTUBE_TOKEN_BASE64" ] && [ -n "$CLIENT_SECRETS_BASE64" ]; then
+            echo "YouTube credentials found — running with upload"
+            python -m futuredecoded.main --daily --upload
+          else
+            echo "YouTube credentials missing — running dry-run (no upload)"
+            python -m futuredecoded.main --daily --dry-run
+          fi
 
       - name: Upload artifacts
         if: always()
@@ -58,3 +91,4 @@ jobs:
           name: pipeline-outputs
           path: outputs/
           retention-days: 7
+          if-no-files-found: ignore

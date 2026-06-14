@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -27,8 +28,9 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = get_settings()
-    if args.dry_run:
-        settings.dry_run = True
+    dry_run = args.dry_run or settings.dry_run
+    if dry_run:
+        os.environ["DRY_RUN"] = "true"
     configure_logging(settings.log_level)
     settings.ensure_dirs()
 
@@ -44,7 +46,7 @@ def main() -> None:
         return
 
     if args.daily:
-        result = run_daily_pipeline(upload=args.upload and not args.dry_run)
+        result = run_daily_pipeline(upload=args.upload and not dry_run)
         if result.success:
             logger.info(
                 "Pipeline complete: %s | long=%s short=%s",
