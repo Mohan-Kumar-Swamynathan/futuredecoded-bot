@@ -75,6 +75,7 @@ jobs:
           YOUTUBE_TOKEN_BASE64: ${{ secrets.YOUTUBE_TOKEN_BASE64 }}
           CLIENT_SECRETS_BASE64: ${{ secrets.CLIENT_SECRETS_BASE64 }}
           TREND_SCORE_THRESHOLD: 80
+          TREND_SCORE_FALLBACK_THRESHOLD: 50
         run: |
           if [ -n "$YOUTUBE_TOKEN_BASE64" ] && [ -n "$CLIENT_SECRETS_BASE64" ]; then
             echo "YouTube credentials found — running with upload"

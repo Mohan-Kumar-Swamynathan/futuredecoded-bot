@@ -14,6 +14,22 @@ from futuredecoded.discovery.virality_scorer import ScoredStory, score_story, se
 logger = logging.getLogger("futuredecoded.discovery.engine")
 
 
+def _news_volume_signal(source: str, raw_score: int) -> float:
+    if source == "google_news":
+        return 85.0
+    if source in ("openai", "anthropic", "google_ai", "deepmind"):
+        return 90.0
+    return min(100.0, 50.0 + raw_score / 5.0)
+
+
+def _social_signal(source: str, raw_score: int) -> float:
+    if source.startswith("reddit_"):
+        return min(100.0, 40.0 + raw_score / 3.0)
+    if source == "hacker_news":
+        return min(100.0, 35.0 + raw_score / 4.0)
+    return min(100.0, 45.0 + raw_score / 6.0)
+
+
 def discover_and_score() -> ScoredStory | None:
     raw_stories = []
     raw_stories.extend(fetch_hacker_news_stories())
@@ -34,6 +50,8 @@ def discover_and_score() -> ScoredStory | None:
             url=raw.url,
             source=raw.source,
             raw_score=raw.score,
+            news_volume=_news_volume_signal(raw.source, raw.score),
+            social_mentions=_social_signal(raw.source, raw.score),
         )
         if story.content_hash in seen_hashes:
             continue

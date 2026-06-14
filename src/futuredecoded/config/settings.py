@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     telegram_channel_id: str = ""
 
     trend_score_threshold: int = 80
+    trend_score_fallback_threshold: int = 50
     database_url: str = "sqlite:///database/futuredecoded.db"
     log_level: str = "INFO"
     dry_run: bool = False
