@@ -9,6 +9,10 @@ from pathlib import Path
 from urllib.parse import quote
 
 from futuredecoded.config.channel_profile import MIN_FACT_SOURCES
+from futuredecoded.discovery.fetchers.google_news import (
+    NewsSourceReference,
+    search_google_news_for_story,
+)
 from futuredecoded.llm.provider_client import get_llm_client
 
 logger = logging.getLogger("futuredecoded.editorial.fact_checker")
@@ -27,34 +31,87 @@ class FactCheckResult:
     confidence: float
 
 
-def _enrich_sources(sources: list[dict], title: str, url: str) -> list[dict]:
+def _reference_to_source(reference: NewsSourceReference) -> dict[str, str | bool]:
+    return {
+        "name": reference.name,
+        "url": reference.url,
+        "headline": reference.headline,
+        "verified": reference.verified,
+    }
+
+
+def _append_unique_source(
+    enriched: list[dict],
+    seen_urls: set[str],
+    source: dict[str, str | bool],
+) -> None:
+    source_url = str(source.get("url", "")).strip()
+    if not source_url or source_url in seen_urls:
+        return
+    enriched.append(source)
+    seen_urls.add(source_url)
+
+
+def _fetch_google_news_sources(title: str) -> list[dict[str, str | bool]]:
+    references = search_google_news_for_story(title, limit=5)
+    return [_reference_to_source(reference) for reference in references]
+
+
+def _format_sources_for_prompt(sources: list[dict]) -> str:
+    if not sources:
+        return "None found yet."
+    lines = []
+    for index, source in enumerate(sources, start=1):
+        headline = source.get("headline", "")
+        name = source.get("name", "Unknown")
+        source_url = source.get("url", "")
+        detail = f"{index}. {name}: {headline} ({source_url})" if headline else f"{index}. {name} ({source_url})"
+        lines.append(detail)
+    return "\n".join(lines)
+
+
+def _enrich_sources(
+    sources: list[dict],
+    title: str,
+    url: str,
+    google_news_sources: list[dict[str, str | bool]] | None = None,
+) -> list[dict]:
     """Ensure at least MIN_FACT_SOURCES credible references exist."""
     enriched: list[dict] = list(sources)
-    seen_urls = {source.get("url", "") for source in enriched if source.get("url")}
+    seen_urls = {str(source.get("url", "")).strip() for source in enriched if source.get("url")}
+
+    resolved_google_sources = google_news_sources
+    if resolved_google_sources is None:
+        resolved_google_sources = _fetch_google_news_sources(title)
+
+    for google_source in resolved_google_sources:
+        if len(enriched) >= MIN_FACT_SOURCES:
+            break
+        _append_unique_source(enriched, seen_urls, google_source)
 
     fallback_sources = [
         {"name": "Primary source", "url": url, "verified": bool(url)},
         {
-            "name": "Google News",
+            "name": "Google News search",
             "url": f"https://news.google.com/search?q={quote(title[:80])}",
             "verified": True,
         },
-        {"name": "Reuters Technology", "url": "https://www.reuters.com/technology/", "verified": True},
     ]
 
     for fallback in fallback_sources:
         if len(enriched) >= MIN_FACT_SOURCES:
             break
-        fallback_url = fallback.get("url", "")
-        if fallback_url and fallback_url not in seen_urls:
-            enriched.append(fallback)
-            seen_urls.add(fallback_url)
+        _append_unique_source(enriched, seen_urls, fallback)
 
     return enriched
 
 
-def _heuristic_check(title: str, url: str) -> dict:
-    sources = _enrich_sources([], title, url)
+def _heuristic_check(
+    title: str,
+    url: str,
+    google_news_sources: list[dict[str, str | bool]],
+) -> dict:
+    sources = _enrich_sources([], title, url, google_news_sources=google_news_sources)
     passed = bool(url) and not any(keyword in title.lower() for keyword in SPECULATION_KEYWORDS)
     return {
         "passed": passed,
@@ -66,10 +123,14 @@ def _heuristic_check(title: str, url: str) -> dict:
 
 def verify_story(title: str, url: str, output_dir: Path) -> FactCheckResult:
     llm = get_llm_client()
+    google_news_sources = _fetch_google_news_sources(title)
     prompt = f"""Fact-check this AI/tech news story for a YouTube channel.
 
 Title: {title}
 Primary URL: {url}
+
+Corroborating Google News coverage:
+{_format_sources_for_prompt(google_news_sources)}
 
 Return JSON:
 {{
@@ -83,6 +144,7 @@ Return JSON:
 
 Rules:
 - Include at least {MIN_FACT_SOURCES} independent credible sources in the sources array
+- Prefer the Google News coverage listed above when citing sources
 - Reject rumors, speculation, unverified claims
 - Only pass if story is fact-based and verifiable
 """
@@ -91,9 +153,14 @@ Rules:
         logger.info("LLM fact-check completed via provider chain")
     except Exception as exc:
         logger.warning("LLM fact-check failed, using heuristic: %s", exc)
-        result = _heuristic_check(title, url)
+        result = _heuristic_check(title, url, google_news_sources)
 
-    sources = _enrich_sources(result.get("sources", []), title, url)
+    sources = _enrich_sources(
+        result.get("sources", []),
+        title,
+        url,
+        google_news_sources=google_news_sources,
+    )
     passed = bool(result.get("passed", False))
 
     if len(sources) < MIN_FACT_SOURCES:

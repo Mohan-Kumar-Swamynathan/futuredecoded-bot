@@ -1,22 +1,53 @@
 """Tests for fact checker source enrichment."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 from futuredecoded.editorial.fact_checker import _enrich_sources, verify_story
 
+MOCK_GOOGLE_SOURCES = [
+    {
+        "name": "Reuters",
+        "url": "https://news.google.com/rss/articles/reuters",
+        "headline": "Amazon CEO talks with officials",
+        "verified": True,
+    },
+    {
+        "name": "Bloomberg",
+        "url": "https://news.google.com/rss/articles/bloomberg",
+        "headline": "Amazon regulatory meetings reported",
+        "verified": True,
+    },
+]
 
-def test_enrich_sources_pads_to_minimum_three():
+
+@patch(
+    "futuredecoded.editorial.fact_checker._fetch_google_news_sources",
+    return_value=MOCK_GOOGLE_SOURCES,
+)
+def test_enrich_sources_pads_to_minimum_three(_mock_google):
     sources = _enrich_sources(
         [{"name": "Only one", "url": "https://example.com/story", "verified": True}],
         title="OpenAI announces new tool",
         url="https://example.com/story",
+        google_news_sources=MOCK_GOOGLE_SOURCES,
     )
     assert len(sources) >= 3
+    assert any(source.get("name") == "Reuters" for source in sources)
 
 
-def test_verify_story_passes_when_llm_returns_single_source(tmp_path: Path, monkeypatch):
+@patch(
+    "futuredecoded.editorial.fact_checker._fetch_google_news_sources",
+    return_value=MOCK_GOOGLE_SOURCES,
+)
+def test_verify_story_passes_when_llm_returns_single_source(
+    _mock_google,
+    tmp_path: Path,
+    monkeypatch,
+):
     class FakeLlm:
         def call_json(self, prompt: str):
+            assert "Corroborating Google News coverage" in prompt
             return {
                 "passed": True,
                 "confidence": 0.8,
@@ -39,7 +70,11 @@ def test_verify_story_passes_when_llm_returns_single_source(tmp_path: Path, monk
     assert (tmp_path / "fact_check_log.json").exists()
 
 
-def test_verify_story_rejects_rumor_title(tmp_path: Path, monkeypatch):
+@patch(
+    "futuredecoded.editorial.fact_checker._fetch_google_news_sources",
+    return_value=MOCK_GOOGLE_SOURCES,
+)
+def test_verify_story_rejects_rumor_title(_mock_google, tmp_path: Path, monkeypatch):
     class FakeLlm:
         def call_json(self, prompt: str):
             return {"passed": True, "confidence": 0.9, "reason": "ok", "sources": []}
