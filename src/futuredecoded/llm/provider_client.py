@@ -1,0 +1,160 @@
+"""Multi-provider LLM client with fallback chain."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import time
+from typing import Any, Optional
+
+import requests
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+logger = logging.getLogger("futuredecoded.llm")
+
+
+def _strip_json_fences(text: str) -> str:
+    return re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
+
+
+class ProviderClient:
+    """Gemini → Groq → OpenRouter → OpenAI → Ollama."""
+
+    def __init__(
+        self,
+        gemini_key: str = "",
+        groq_key: str = "",
+        openrouter_key: str = "",
+        openai_key: str = "",
+        ollama_url: str = "http://localhost:11434",
+    ):
+        self.gemini_key = gemini_key
+        self.groq_key = groq_key
+        self.openrouter_key = openrouter_key
+        self.openai_key = openai_key
+        self.ollama_url = ollama_url.rstrip("/")
+        self._providers = self._build_chain()
+
+    def _build_chain(self) -> list[str]:
+        chain: list[str] = []
+        if self.gemini_key:
+            chain.append("gemini")
+        if self.groq_key:
+            chain.append("groq")
+        if self.openrouter_key:
+            chain.append("openrouter")
+        if self.openai_key:
+            chain.append("openai")
+        chain.append("ollama")
+        return chain
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+    def call(self, prompt: str, max_tokens: int = 4096) -> str:
+        errors: list[str] = []
+        for provider in self._providers:
+            try:
+                return self._dispatch(provider, prompt, max_tokens)
+            except Exception as exc:
+                errors.append(f"{provider}: {exc}")
+                logger.warning("LLM provider %s failed: %s", provider, exc)
+        raise RuntimeError("All LLM providers failed: " + "; ".join(errors[:3]))
+
+    def call_json(self, prompt: str) -> dict[str, Any]:
+        json_prompt = (
+            prompt + "\n\nRespond ONLY with valid JSON. No markdown fences."
+        )
+        raw = self.call(json_prompt)
+        cleaned = _strip_json_fences(raw)
+        return json.loads(cleaned)
+
+    def _dispatch(self, provider: str, prompt: str, max_tokens: int) -> str:
+        if provider == "gemini":
+            return self._call_gemini(prompt)
+        if provider == "groq":
+            return self._call_groq(prompt, max_tokens)
+        if provider == "openrouter":
+            return self._call_openrouter(prompt, max_tokens)
+        if provider == "openai":
+            return self._call_openai(prompt, max_tokens)
+        return self._call_ollama(prompt)
+
+    def _call_gemini(self, prompt: str) -> str:
+        import google.genai as genai
+        client = genai.Client(api_key=self.gemini_key)
+        resp = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+        )
+        return resp.text
+
+    def _call_groq(self, prompt: str, max_tokens: int) -> str:
+        from groq import Groq
+        client = Groq(api_key=self.groq_key)
+        resp = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+        )
+        return resp.choices[0].message.content
+
+    def _call_openrouter(self, prompt: str, max_tokens: int) -> str:
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.openrouter_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "google/gemini-2.0-flash-001",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+    def _call_openai(self, prompt: str, max_tokens: int) -> str:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.openai_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+    def _call_ollama(self, prompt: str) -> str:
+        resp = requests.post(
+            f"{self.ollama_url}/api/generate",
+            json={"model": "llama3.2", "prompt": prompt, "stream": False},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()["response"]
+
+
+_client: Optional[ProviderClient] = None
+
+
+def get_llm_client() -> ProviderClient:
+    global _client
+    if _client is None:
+        from futuredecoded.config.settings import get_settings
+        settings = get_settings()
+        _client = ProviderClient(
+            gemini_key=settings.gemini_api_key,
+            groq_key=settings.groq_api_key,
+            openrouter_key=settings.openrouter_api_key,
+            openai_key=settings.openai_api_key,
+            ollama_url=settings.ollama_base_url,
+        )
+    return _client

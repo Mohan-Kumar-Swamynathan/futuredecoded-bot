@@ -1,0 +1,32 @@
+channel:
+  name: FutureDecoded
+  tagline: Making Sense of Tomorrow
+  category_id: "28"
+  language: en
+
+pipeline:
+  trend_score_threshold: 80
+  max_stories_per_run: 1
+  default_format: both
+
+voice:
+  primary: edge-tts
+  voice: en-US-GuyNeural
+  rate: "-5%"
+  pitch: "+0Hz"
+
+video:
+  long:
+    width: 1920
+    height: 1080
+    min_duration_s: 300
+    max_duration_s: 600
+  short:
+    width: 1080
+    height: 1920
+    min_duration_s: 45
+    max_duration_s: 60
+
+upload:
+  privacy: public
+  schedule_offset_hours: 2

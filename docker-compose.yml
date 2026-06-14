@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  futuredecoded:
+    build: .
+    env_file: .env
+    volumes:
+      - ./outputs:/app/outputs
+      - ./database:/app/database
+      - ./config:/app/config
+      - ./logs:/app/logs
+    command: python -m futuredecoded.main --daily --upload

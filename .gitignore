@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+outputs/
+logs/
+.cache/
+database/*.db
+config/*token*
+config/*secrets*
+config/client_secrets.json
+*.pickle
+*.mp4
+*.mp3
+.pytest_cache/
+.DS_Store
