@@ -25,7 +25,9 @@ def collect_visuals(topic_slug: str, keywords: list[str], max_images: int = 8) -
         downloaded.extend(_fetch_pixabay(keywords, asset_dir, max_images - len(downloaded), settings.pixabay_api_key))
 
     if len(downloaded) < 3:
-        downloaded.extend(_generate_placeholder_images(asset_dir, max(3, max_images - len(downloaded)))
+        downloaded.extend(
+            _generate_placeholder_images(asset_dir, max(3, max_images - len(downloaded)))
+        )
 
     logger.info("Collected %d visuals for %s", len(downloaded), topic_slug)
     return downloaded[:max_images]
