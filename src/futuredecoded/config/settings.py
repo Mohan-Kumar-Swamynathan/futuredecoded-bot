@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
 
+    github_models_token: str = ""
+    github_models_model: str = "openai/gpt-4o-mini"
+    github_models_base_url: str = "https://models.github.ai"
+
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
 

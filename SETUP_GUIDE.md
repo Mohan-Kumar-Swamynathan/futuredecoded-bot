@@ -30,6 +30,23 @@ PEXELS_API_KEY=your_key
 TREND_SCORE_THRESHOLD=80
 ```
 
+### GitHub Models (LLM fallback)
+
+FutureDecoded tries **Gemini → Groq first**, then falls back to [GitHub Models](https://docs.github.com/en/rest/models/inference) if those fail.
+
+**In GitHub Actions:** no extra secret needed — the workflow uses `GITHUB_TOKEN` with `models: read` permission automatically.
+
+**For local runs**, create a fine-grained Personal Access Token:
+
+1. GitHub → Settings → Developer settings → Fine-grained tokens
+2. Scope: **Models** → Read access
+3. Add to `.env`:
+
+```env
+GITHUB_MODELS_TOKEN=github_pat_...
+GITHUB_MODELS_MODEL=openai/gpt-4o-mini
+```
+
 ## 4. YouTube OAuth (Separate from am/aalaya_mani bots)
 
 1. Create OAuth credentials in Google Cloud Console (Desktop app)
@@ -95,4 +112,5 @@ outputs/{topic-slug}/
 | edge-tts not found | `pip install edge-tts` |
 | ffmpeg not found | `brew install ffmpeg` (macOS) |
 | YouTube auth fails | Re-run `--auth-youtube`, check client secrets path |
-| LLM errors | Ensure at least `GEMINI_API_KEY` or `GROQ_API_KEY` is set |
+| LLM errors | Ensure `GEMINI_API_KEY` or `GROQ_API_KEY` is set; GitHub Models activates as fallback if token present |
+| GitHub Models 403 | PAT needs `models: read` scope, or enable `models: read` in workflow permissions |
