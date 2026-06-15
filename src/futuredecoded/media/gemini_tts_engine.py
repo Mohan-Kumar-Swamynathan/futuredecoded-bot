@@ -146,6 +146,10 @@ def _extract_pcm_audio(response) -> bytes:
 
 
 def _write_pcm_as_wav(pcm_data: bytes, output_wav_path: Path) -> None:
+    minimum_bytes = 24000 * 2  # at least ~1 second of mono 16-bit PCM at 24 kHz
+    if len(pcm_data) < minimum_bytes:
+        raise RuntimeError(f"Gemini TTS returned truncated PCM audio ({len(pcm_data)} bytes)")
+
     output_wav_path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(output_wav_path), "wb") as wav_file:
         wav_file.setnchannels(1)
