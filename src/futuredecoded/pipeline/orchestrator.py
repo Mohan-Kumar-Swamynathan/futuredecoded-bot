@@ -1,4 +1,4 @@
-"""Master pipeline orchestrator — end-to-end daily run."""
+"""Master pipeline orchestrator — end-to-end daily run with story retry."""
 
 from __future__ import annotations
 
@@ -10,14 +10,16 @@ from zoneinfo import ZoneInfo
 
 from futuredecoded.analytics.analytics_engine import generate_weekly_report, store_analytics_snapshot
 from futuredecoded.analytics.learning_engine import analyse_and_update_preferences
-from futuredecoded.config.channel_profile import ContentFormat
+from futuredecoded.config.channel_profile import ContentFormat, THUMBNAIL_VARIANT_COUNT
 from futuredecoded.config.settings import get_settings
-from futuredecoded.database.models import StoryRecord, StorySourceRecord, get_session, init_database
-from futuredecoded.discovery.trend_engine import discover_and_score
+from futuredecoded.database.models import StoryRecord, get_session, init_database
+from futuredecoded.discovery.trend_engine import discover_ranked_stories
+from futuredecoded.discovery.virality_scorer import ScoredStory
+from futuredecoded.editorial.compliance_guard import validate_script_compliance
 from futuredecoded.editorial.content_strategist import decide_format
 from futuredecoded.editorial.fact_checker import verify_story
 from futuredecoded.editorial.script_generator import generate_scripts
-from futuredecoded.media.thumbnail_engine import generate_thumbnail
+from futuredecoded.media.thumbnail_engine import generate_thumbnail, generate_thumbnail_variants
 from futuredecoded.media.video_engine import build_long_video, build_short_video
 from futuredecoded.media.visual_collector import collect_visuals_for_story
 from futuredecoded.media.voice_engine import synthesise_voice
@@ -27,12 +29,14 @@ from futuredecoded.publish.schedule_planner import (
 )
 from futuredecoded.publish.social_publisher import publish_social_posts
 from futuredecoded.publish.youtube_uploader import upload_video
+from futuredecoded.research.research_engine import gather_research
 from futuredecoded.seo.chapter_builder import build_chapters_from_sections
 from futuredecoded.seo.description_formatter import build_long_form_description, build_shorts_description
 from futuredecoded.seo.seo_engine import enrich_seo
 
 logger = logging.getLogger("futuredecoded.pipeline")
 IST = ZoneInfo("Asia/Kolkata")
+MAX_STORY_ATTEMPTS = 5
 
 
 @dataclass
@@ -70,33 +74,112 @@ def _slugify(text: str) -> str:
     return re.sub(r"[-\s]+", "-", slug).strip("-")[:60]
 
 
+def _collect_thumbnail_concepts(primary_title: str, seo_payload: dict) -> list[str]:
+    concepts = [primary_title]
+    for alt_title in seo_payload.get("alternative_titles", []):
+        if alt_title and alt_title not in concepts:
+            concepts.append(str(alt_title))
+    return concepts[:THUMBNAIL_VARIANT_COUNT]
+
+
+def _attempt_fact_check(
+    candidate: ScoredStory,
+    output_root: Path,
+) -> tuple[ScoredStory | None, Path, object | None]:
+    topic_slug = _slugify(candidate.title)
+    output_dir = output_root / topic_slug
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    fact_result = verify_story(
+        candidate.title,
+        candidate.url,
+        output_dir,
+        story_source=candidate.source,
+    )
+    if fact_result.passed:
+        return candidate, output_dir, fact_result
+
+    logger.warning(
+        "Fact check failed for '%s' (score=%.1f): %s",
+        candidate.title[:50],
+        candidate.trend_score,
+        fact_result.reason,
+    )
+    return None, output_dir, fact_result
+
+
 def run_daily_pipeline(upload: bool = True) -> PipelineResult:
     settings = get_settings()
     settings.ensure_dirs()
     init_database(settings.database_url)
 
-    story = discover_and_score()
-    if not story:
+    candidates = discover_ranked_stories(limit=MAX_STORY_ATTEMPTS)
+    if not candidates:
         return PipelineResult(False, "", settings.outputs_dir, error="No qualifying story found")
 
-    topic_slug = _slugify(story.title)
-    output_dir = settings.outputs_dir / topic_slug
-    output_dir.mkdir(parents=True, exist_ok=True)
+    story: ScoredStory | None = None
+    output_dir = settings.outputs_dir
+    fact_result = None
+
+    for attempt_index, candidate in enumerate(candidates[:MAX_STORY_ATTEMPTS], start=1):
+        logger.info(
+            "Story attempt %d/%d (score=%.1f, source=%s): %s",
+            attempt_index,
+            min(len(candidates), MAX_STORY_ATTEMPTS),
+            candidate.trend_score,
+            candidate.source,
+            candidate.title[:60],
+        )
+        verified_story, candidate_output_dir, candidate_fact_result = _attempt_fact_check(
+            candidate,
+            settings.outputs_dir,
+        )
+        output_dir = candidate_output_dir
+        fact_result = candidate_fact_result
+        if verified_story:
+            story = verified_story
+            break
+
+    if not story or not fact_result:
+        first_title = candidates[0].title if candidates else ""
+        last_reason = fact_result.reason if fact_result else "All candidates failed fact-check"
+        return PipelineResult(
+            False,
+            first_title,
+            output_dir,
+            error=f"Fact check failed after {min(len(candidates), MAX_STORY_ATTEMPTS)} attempts: {last_reason}",
+        )
 
     logger.info("Selected story (score=%.1f): %s", story.trend_score, story.title[:60])
 
-    fact_result = verify_story(story.title, story.url, output_dir)
-    if not fact_result.passed:
-        return PipelineResult(False, story.title, output_dir, error=f"Fact check failed: {fact_result.reason}")
+    research = gather_research(
+        title=story.title,
+        url=story.url,
+        source=story.source,
+        fact_check_sources=fact_result.sources,
+        output_dir=output_dir,
+    )
 
     content_format = decide_format(story)
-    scripts = generate_scripts(story.title, story.url, output_dir)
+    scripts = generate_scripts(story.title, story.url, output_dir, research=research)
+
+    compliance = validate_script_compliance(
+        scripts.script_long,
+        scripts.script_sections,
+        story.title,
+    )
+    if not compliance.passed:
+        logger.warning(
+            "Script compliance warnings (%d words): %s",
+            compliance.word_count,
+            "; ".join(compliance.issues[:3]),
+        )
 
     sources = [source.get("url", story.url) for source in fact_result.sources]
     seo = enrich_seo(story.title, scripts.script_long, scripts.script_short, sources, output_dir)
 
     visuals_long = collect_visuals_for_story(
-        topic_slug=topic_slug,
+        topic_slug=_slugify(story.title),
         story_title=story.title,
         outline=scripts.outline,
         sections=scripts.script_sections,
@@ -104,7 +187,7 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         orientation="landscape",
     )
     visuals_short = collect_visuals_for_story(
-        topic_slug=topic_slug,
+        topic_slug=_slugify(story.title),
         story_title=story.title,
         outline=scripts.outline,
         sections=scripts.script_short_sections,
@@ -130,7 +213,11 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
     short_video_id = None
 
     if content_format in (ContentFormat.LONG, ContentFormat.BOTH):
-        voice_long, duration_long = synthesise_voice(scripts.script_long, output_dir / "voice_long.mp3")
+        voice_long, duration_long = synthesise_voice(
+            scripts.script_long,
+            output_dir / "voice_long.mp3",
+            format_type="long",
+        )
         chapters_long = build_chapters_from_sections(
             scripts.script_sections,
             duration_long,
@@ -147,19 +234,31 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         _save_description(output_dir, "description_long.txt", long_description)
         srt_long = voice_long.with_suffix(".srt")
         video_long = build_long_video(
-            scripts.script_long, voice_long, visuals_long,
-            output_dir / "video_long.mp4", srt_long,
+            scripts.script_long,
+            voice_long,
+            visuals_long,
+            output_dir / "video_long.mp4",
+            srt_long,
+            sections=scripts.script_sections,
         )
-        thumb_long = generate_thumbnail(
+        long_title = seo.long_form.get("title", story.title)
+        thumb_concepts = _collect_thumbnail_concepts(long_title, seo.long_form)
+        thumb_variants = generate_thumbnail_variants(
             video_long or output_dir / "video_long.mp4",
-            seo.long_form.get("title", story.title)[:20],
+            thumb_concepts,
+            output_dir / "thumbnails_long",
+            hero_image=hero_image,
+        )
+        thumb_long = thumb_variants[0] if thumb_variants else generate_thumbnail(
+            video_long or output_dir / "video_long.mp4",
+            long_title[:20],
             output_dir / "thumbnail_long.png",
             hero_image=hero_image,
         )
         if upload and video_long:
             long_video_id = upload_video(
                 video_path=video_long,
-                title=seo.long_form.get("title", story.title),
+                title=long_title,
                 description=long_description,
                 tags=seo.long_form.get("tags", []),
                 thumbnail_path=thumb_long,
@@ -171,7 +270,11 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
                 store_analytics_snapshot(long_video_id, {"views": 0, "ctr": 0.0, "retention": 0.0})
 
     if content_format in (ContentFormat.SHORT, ContentFormat.BOTH):
-        voice_short, duration_short = synthesise_voice(scripts.script_short, output_dir / "voice_short.mp3")
+        voice_short, duration_short = synthesise_voice(
+            scripts.script_short,
+            output_dir / "voice_short.mp3",
+            format_type="short",
+        )
         chapters_short = build_chapters_from_sections(
             scripts.script_short_sections,
             duration_short,
@@ -188,19 +291,32 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         _save_description(output_dir, "description_short.txt", shorts_description)
         srt_short = voice_short.with_suffix(".srt")
         video_short = build_short_video(
-            scripts.script_short, voice_short, visuals_short,
-            output_dir / "video_short.mp4", srt_short,
+            scripts.script_short,
+            voice_short,
+            visuals_short,
+            output_dir / "video_short.mp4",
+            srt_short,
+            sections=scripts.script_short_sections,
         )
-        thumb_short = generate_thumbnail(
+        short_title = seo.shorts.get("title", f"{story.title[:50]} #Shorts")
+        short_thumb_concepts = _collect_thumbnail_concepts(short_title, seo.shorts)
+        short_hero = visuals_short[0] if visuals_short else hero_image
+        thumb_variants_short = generate_thumbnail_variants(
             video_short or output_dir / "video_short.mp4",
-            seo.shorts.get("title", story.title)[:15],
+            short_thumb_concepts,
+            output_dir / "thumbnails_short",
+            hero_image=short_hero,
+        )
+        thumb_short = thumb_variants_short[0] if thumb_variants_short else generate_thumbnail(
+            video_short or output_dir / "video_short.mp4",
+            short_title[:15],
             output_dir / "thumbnail_short.png",
-            hero_image=visuals_short[0] if visuals_short else hero_image,
+            hero_image=short_hero,
         )
         if upload and video_short:
             short_video_id = upload_video(
                 video_path=video_short,
-                title=seo.shorts.get("title", f"{story.title[:50]} #Shorts"),
+                title=short_title,
                 description=shorts_description,
                 tags=seo.shorts.get("tags", []),
                 thumbnail_path=thumb_short,
@@ -225,7 +341,7 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
     )
 
 
-def _persist_story(story, output_dir: Path) -> None:
+def _persist_story(story: ScoredStory, output_dir: Path) -> None:
     session = get_session()
     try:
         record = StoryRecord(

@@ -42,7 +42,17 @@ class ProviderClient:
         self.openrouter_key = openrouter_key
         self.openai_key = openai_key
         self.ollama_url = ollama_url.rstrip("/")
+        self._disabled_providers: set[str] = set()
         self._providers = self._build_chain()
+
+    def _is_rate_limit_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "429" in message or "rate limit" in message or "resource_exhausted" in message or "quota" in message
+
+    def _disable_provider(self, provider: str, exc: Exception) -> None:
+        if self._is_rate_limit_error(exc):
+            self._disabled_providers.add(provider)
+            logger.warning("Provider disabled for this run due to quota: %s", provider)
 
     def _resolve_github_models_token(self) -> str:
         return (
@@ -52,12 +62,18 @@ class ProviderClient:
         )
 
     def _build_chain(self) -> list[str]:
+        custom_order = os.environ.get("LLM_PROVIDER_ORDER", "").strip()
+        if custom_order:
+            return [provider.strip() for provider in custom_order.split(",") if provider.strip()]
+
         chain: list[str] = []
+        if os.environ.get("GITHUB_ACTIONS") == "true" and self._resolve_github_models_token():
+            chain.append("github_models")
         if self.gemini_key:
             chain.append("gemini")
         if self.groq_key:
             chain.append("groq")
-        if self._resolve_github_models_token():
+        if self._resolve_github_models_token() and "github_models" not in chain:
             chain.append("github_models")
         if self.openrouter_key:
             chain.append("openrouter")
@@ -70,12 +86,15 @@ class ProviderClient:
     def call(self, prompt: str, max_tokens: int = 4096) -> str:
         errors: list[str] = []
         for provider in self._providers:
+            if provider in self._disabled_providers:
+                continue
             try:
                 logger.info("LLM attempt: provider=%s", provider)
                 response = self._dispatch(provider, prompt, max_tokens)
                 logger.info("LLM success: provider=%s", provider)
                 return response
             except Exception as exc:
+                self._disable_provider(provider, exc)
                 errors.append(f"{provider}: {exc}")
                 logger.warning("LLM provider %s failed: %s", provider, str(exc)[:200])
         raise RuntimeError("All LLM providers failed: " + "; ".join(errors[:4]))

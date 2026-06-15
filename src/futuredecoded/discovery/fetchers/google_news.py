@@ -13,6 +13,8 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from futuredecoded.config.channel_profile import TOPIC_KEYWORDS
 
+from futuredecoded.discovery.news_query_builder import build_news_search_queries
+
 logger = logging.getLogger("futuredecoded.discovery.google_news")
 
 _STOP_WORDS = frozenset({
@@ -83,7 +85,12 @@ def _title_overlap_score(story_title: str, article_headline: str) -> float:
     return len(story_tokens & article_tokens) / len(story_tokens)
 
 
-def _parse_news_references(feed_url: str, story_title: str, limit: int) -> list[NewsSourceReference]:
+def _parse_news_references(
+    feed_url: str,
+    story_title: str,
+    limit: int,
+    overlap_threshold: float = 0.15,
+) -> list[NewsSourceReference]:
     references: list[NewsSourceReference] = []
     feed = _fetch_rss_feed(feed_url)
     ranked_entries: list[tuple[float, dict]] = []
@@ -96,7 +103,7 @@ def _parse_news_references(feed_url: str, story_title: str, limit: int) -> list[
     ranked_entries.sort(key=lambda item: item[0], reverse=True)
 
     for overlap, entry in ranked_entries:
-        if overlap < 0.15 and references:
+        if overlap < overlap_threshold and references:
             continue
         article_url = str(entry.get("link", "")).strip()
         if not article_url:
@@ -115,15 +122,33 @@ def _parse_news_references(feed_url: str, story_title: str, limit: int) -> list[
     return references
 
 
+def _search_with_queries(story_title: str, limit: int) -> list[NewsSourceReference]:
+    queries = build_news_search_queries(story_title)
+    collected: list[NewsSourceReference] = []
+    seen_urls: set[str] = set()
+
+    for query in queries:
+        feed_url = _build_google_news_rss_url(query)
+        for overlap_threshold in (0.15, 0.0):
+            batch = _parse_news_references(feed_url, story_title, limit, overlap_threshold)
+            for reference in batch:
+                if reference.url in seen_urls:
+                    continue
+                seen_urls.add(reference.url)
+                collected.append(reference)
+                if len(collected) >= limit:
+                    return collected
+    return collected
+
+
 @retry(stop=stop_after_attempt(2), wait=wait_fixed(2))
 def search_google_news_for_story(story_title: str, limit: int = 5) -> list[NewsSourceReference]:
     """Search Google News RSS for corroborating coverage of a specific story."""
     if not story_title.strip():
         return []
 
-    feed_url = _build_google_news_rss_url(story_title[:120])
     try:
-        references = _parse_news_references(feed_url, story_title, limit)
+        references = _search_with_queries(story_title, limit)
         logger.info(
             "Google News search returned %d references for: %s",
             len(references),

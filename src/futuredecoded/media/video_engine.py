@@ -9,7 +9,9 @@ import tempfile
 from pathlib import Path
 
 from futuredecoded.config.channel_profile import LONG_FORM_SPEC, SHORTS_SPEC
-from futuredecoded.media.voice_engine import get_audio_duration
+from futuredecoded.media.scene_planner import VideoScene, plan_video_scenes
+from futuredecoded.media.audio_utils import get_audio_duration
+from futuredecoded.media.watermark_engine import apply_watermark_to_video
 
 logger = logging.getLogger("futuredecoded.media.video")
 
@@ -34,6 +36,7 @@ def build_long_video(
     images: list[Path],
     output_path: Path,
     srt_path: Path | None = None,
+    sections: list[dict[str, str]] | None = None,
 ) -> Path | None:
     return _build_video(
         script_text=script_text,
@@ -43,6 +46,7 @@ def build_long_video(
         width=LONG_FORM_SPEC.width,
         height=LONG_FORM_SPEC.height,
         srt_path=srt_path,
+        sections=sections,
     )
 
 
@@ -52,6 +56,7 @@ def build_short_video(
     images: list[Path],
     output_path: Path,
     srt_path: Path | None = None,
+    sections: list[dict[str, str]] | None = None,
 ) -> Path | None:
     return _build_video(
         script_text=script_text,
@@ -61,6 +66,7 @@ def build_short_video(
         width=SHORTS_SPEC.width,
         height=SHORTS_SPEC.height,
         srt_path=srt_path,
+        sections=sections,
     )
 
 
@@ -72,6 +78,7 @@ def _build_video(
     width: int,
     height: int,
     srt_path: Path | None,
+    sections: list[dict[str, str]] | None = None,
 ) -> Path | None:
     if not shutil.which("ffmpeg"):
         logger.error("ffmpeg not found")
@@ -89,7 +96,11 @@ def _build_video(
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
         raw_video = temp_path / "raw.mp4"
-        segment_clips = _render_image_segments(images, duration, width, height, temp_path)
+        if sections:
+            scenes = plan_video_scenes(sections, duration, script_text[:80], images)
+            segment_clips = _render_scene_segments(scenes, width, height, temp_path)
+        else:
+            segment_clips = _render_image_segments(images, duration, width, height, temp_path)
         if not segment_clips:
             logger.error("Failed to render image segments")
             return None
@@ -103,11 +114,8 @@ def _build_video(
             return None
 
         final_source = temp_path / "with_audio.mp4"
-        if srt_path and srt_path.exists():
-            if _burn_subtitles(final_source, srt_path, output_path):
-                logger.info("Video built with subtitles: %s", output_path.name)
-            else:
-                shutil.copy(final_source, output_path)
+        if _finalize_video(final_source, output_path, srt_path, width, height):
+            logger.info("Video finalized with watermark/subtitles: %s", output_path.name)
         else:
             shutil.copy(final_source, output_path)
 
@@ -116,6 +124,24 @@ def _build_video(
 
     logger.info("Video built: %s (%.1fMB)", output_path.name, output_path.stat().st_size / 1024 / 1024)
     return output_path
+
+
+def _render_scene_segments(
+    scenes: list[VideoScene],
+    width: int,
+    height: int,
+    temp_dir: Path,
+) -> list[Path]:
+    clip_paths: list[Path] = []
+    for index, scene in enumerate(scenes):
+        image_path = scene.image_path
+        if not image_path or not image_path.exists():
+            continue
+        clip_path = temp_dir / f"scene_{index:02d}.mp4"
+        segment_duration = max(scene.duration_seconds, 3.0)
+        if _render_single_segment(image_path, clip_path, segment_duration, index, width, height):
+            clip_paths.append(clip_path)
+    return clip_paths
 
 
 def _render_image_segments(
@@ -129,52 +155,65 @@ def _render_image_segments(
     if not usable_images:
         return []
 
-    segment_duration = max(duration / len(usable_images), 3.0)
+    target_scene_count = max(3, int(duration / 4.0))
+    segment_duration = max(min(duration / target_scene_count, 5.0), 3.0)
     clip_paths: list[Path] = []
 
     for index, image in enumerate(usable_images):
         clip_path = temp_dir / f"segment_{index:02d}.mp4"
-        frame_count = max(int(segment_duration * FRAMES_PER_SECOND), FRAMES_PER_SECOND * 3)
-        zoom_filter = _build_zoompan_filter(index, frame_count, width, height)
-        fade_out_start = max(0.0, segment_duration - FADE_DURATION_SECONDS)
-        video_filter = (
-            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},"
-            f"{zoom_filter},"
-            f"eq=contrast=1.08:saturation=1.15:brightness=0.02,"
-            f"vignette=angle=PI/5,"
-            f"fade=t=in:st=0:d={FADE_DURATION_SECONDS},"
-            f"fade=t=out:st={fade_out_start:.2f}:d={FADE_DURATION_SECONDS},"
-            f"fps={FRAMES_PER_SECOND}"
-        )
-        command = [
-            "ffmpeg",
-            "-y",
-            "-loop",
-            "1",
-            "-i",
-            str(image),
-            "-t",
-            f"{segment_duration:.2f}",
-            "-vf",
-            video_filter,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
-            str(clip_path),
-        ]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
-        if result.returncode != 0:
-            logger.warning("Segment render failed for %s: %s", image.name, result.stderr[-200:])
-            continue
-        clip_paths.append(clip_path)
+        if _render_single_segment(image, clip_path, segment_duration, index, width, height):
+            clip_paths.append(clip_path)
 
     return clip_paths
+
+
+def _render_single_segment(
+    image: Path,
+    clip_path: Path,
+    segment_duration: float,
+    index: int,
+    width: int,
+    height: int,
+) -> bool:
+    frame_count = max(int(segment_duration * FRAMES_PER_SECOND), FRAMES_PER_SECOND * 3)
+    zoom_filter = _build_zoompan_filter(index, frame_count, width, height)
+    fade_out_start = max(0.0, segment_duration - FADE_DURATION_SECONDS)
+    video_filter = (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},"
+        f"{zoom_filter},"
+        f"eq=contrast=1.08:saturation=1.15:brightness=0.02,"
+        f"vignette=angle=PI/5,"
+        f"fade=t=in:st=0:d={FADE_DURATION_SECONDS},"
+        f"fade=t=out:st={fade_out_start:.2f}:d={FADE_DURATION_SECONDS},"
+        f"fps={FRAMES_PER_SECOND}"
+    )
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loop",
+        "1",
+        "-i",
+        str(image),
+        "-t",
+        f"{segment_duration:.2f}",
+        "-vf",
+        video_filter,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        str(clip_path),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    if result.returncode != 0:
+        logger.warning("Segment render failed for %s: %s", image.name, result.stderr[-200:])
+        return False
+    return True
 
 
 def _build_zoompan_filter(index: int, frame_count: int, width: int, height: int) -> str:
@@ -242,6 +281,20 @@ def _mux_audio(video_path: Path, audio_path: Path, output_path: Path, duration: 
         logger.error("Audio mux failed: %s", result.stderr[-300:])
         return False
     return True
+
+
+def _finalize_video(
+    video_path: Path,
+    output_path: Path,
+    srt_path: Path | None,
+    width: int,
+    height: int,
+) -> bool:
+    if apply_watermark_to_video(video_path, output_path, width, height, srt_path=srt_path):
+        return True
+    if srt_path and srt_path.exists():
+        return _burn_subtitles(video_path, srt_path, output_path)
+    return False
 
 
 def _burn_subtitles(video_path: Path, srt_path: Path, output_path: Path) -> bool:

@@ -148,3 +148,32 @@ def generate_thumbnail(
     composed.save(output_path, quality=95)
     logger.info("Thumbnail saved: %s", output_path.name)
     return output_path
+
+
+def generate_thumbnail_variants(
+    video_path: Path,
+    title_concepts: list[str],
+    output_dir: Path,
+    frame_time: float = 3.0,
+    hero_image: Path | None = None,
+) -> list[Path]:
+    """Generate multiple thumbnail concepts and return paths in priority order."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    generated: list[Path] = []
+
+    for index, concept in enumerate(title_concepts):
+        if not concept.strip():
+            continue
+        output_path = output_dir / f"thumb_{index + 1:02d}.png"
+        thumbnail = generate_thumbnail(
+            video_path=video_path,
+            thumbnail_text=concept,
+            output_path=output_path,
+            frame_time=frame_time + (index * 0.5),
+            hero_image=hero_image,
+        )
+        if thumbnail:
+            generated.append(thumbnail)
+
+    logger.info("Generated %d thumbnail variants", len(generated))
+    return generated

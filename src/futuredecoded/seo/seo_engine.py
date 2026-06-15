@@ -1,4 +1,4 @@
-"""SEO enrichment engine — titles, descriptions, tags, social copy."""
+"""SEO enrichment engine — titles, descriptions, tags, engagement copy."""
 
 from __future__ import annotations
 
@@ -42,18 +42,23 @@ Return JSON:
 {{
   "long_form": {{
     "title": "best title under 60 chars",
+    "alternative_titles": ["alt 1", "alt 2", "alt 3"],
     "title_score": 0-100,
-    "intro": "2-3 sentence summary paragraph. Plain text only, no markdown.",
+    "intro": "2-3 sentence summary paragraph. Plain text only.",
     "key_points": ["bullet 1", "bullet 2", "bullet 3", "bullet 4"],
     "tags": ["15-20 tags"],
-    "hashtags": ["#AI", "#TechNews", "#FutureDecoded"]
+    "hashtags": ["#AI", "#TechNews", "#FutureDecoded"],
+    "pinned_comment": "engaging pinned comment inviting discussion",
+    "community_post": "short community tab post for subscribers"
   }},
   "shorts": {{
     "title": "title with #Shorts",
+    "alternative_titles": ["alt 1", "alt 2", "alt 3"],
     "hook": "1-2 sentence hook for Shorts description",
     "key_points": ["point 1", "point 2", "point 3"],
     "tags": ["15 tags"],
-    "hashtags": ["#Shorts", "#AI", "#TechNews"]
+    "hashtags": ["#Shorts", "#AI", "#TechNews"],
+    "pinned_comment": "short pinned comment for Shorts"
   }},
   "social": {{
     "x": "280 char post with link placeholder",
@@ -67,9 +72,10 @@ Return JSON:
 }}
 
 Rules:
-- Do NOT include timestamps or chapters — those are added automatically later
-- Do NOT use escaped newline characters like \\n — use plain text only
-- No markdown formatting
+- No timestamps/chapters — added automatically later
+- No escaped newlines
+- No markdown
+- Titles must be accurate, not misleading clickbait
 """
     result = llm.call_json(prompt)
     seo = SeoMetadata(
@@ -78,15 +84,16 @@ Rules:
         social=result.get("social", {}),
         keywords=result.get("keywords", {}),
     )
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "seo.json").write_text(
-        json.dumps({
-            "long_form": seo.long_form,
-            "shorts": seo.shorts,
-            "social": seo.social,
-            "keywords": seo.keywords,
-        }, indent=2),
-        encoding="utf-8",
-    )
+
+    seo_dir = output_dir / "seo"
+    seo_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "long_form": seo.long_form,
+        "shorts": seo.shorts,
+        "social": seo.social,
+        "keywords": seo.keywords,
+    }
+    (seo_dir / "seo.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    (output_dir / "seo.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     logger.info("SEO metadata saved for: %s", story_title[:50])
     return seo
