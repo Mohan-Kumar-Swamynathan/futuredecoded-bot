@@ -2,26 +2,39 @@
 
 from pathlib import Path
 
-from futuredecoded.media.scene_planner import SCENE_DURATION_SECONDS, plan_video_scenes
+from futuredecoded.media.scene_planner import (
+    HOOK_SCENE_DURATION_SECONDS,
+    MAX_SCENE_DURATION_SECONDS,
+    plan_video_scenes,
+)
 
 
-def test_plan_video_scenes_targets_four_second_cuts():
-    sections = [
-        {"label": "Hook", "text": "Big news today"},
-        {"label": "Impact", "text": "Why it matters"},
-    ]
-    images = [Path("img1.jpg"), Path("img2.jpg")]
-    scenes = plan_video_scenes(sections, total_duration_seconds=20.0, story_title="AI launch", image_paths=images)
+def test_plan_video_scenes_uses_hook_fast_cuts():
+    sections = [{"label": "Hook", "text": "OpenAI just launched GPT-5"}]
+    images = [Path("img1.jpg"), Path("img2.jpg"), Path("img3.jpg")]
+    scenes = plan_video_scenes(sections, total_duration_seconds=20.0, story_title="OpenAI GPT-5", image_paths=images)
 
-    assert len(scenes) == 5
-    assert scenes[0].duration_seconds == SCENE_DURATION_SECONDS
-    assert scenes[-1].duration_seconds >= SCENE_DURATION_SECONDS
+    assert len(scenes) >= 5
+    assert scenes[0].duration_seconds <= HOOK_SCENE_DURATION_SECONDS + 0.01
+    assert scenes[0].is_hook_scene is True
+    assert all(scene.duration_seconds <= MAX_SCENE_DURATION_SECONDS + 0.01 for scene in scenes)
 
 
-def test_plan_video_scenes_assigns_images_round_robin():
+def test_plan_video_scenes_avoids_consecutive_duplicate_images():
     sections = [{"label": "Hook", "text": "Intro"}]
     images = [Path("a.jpg"), Path("b.jpg")]
     scenes = plan_video_scenes(sections, total_duration_seconds=12.0, story_title="Story", image_paths=images)
 
-    assert scenes[0].image_path == Path("a.jpg")
-    assert scenes[1].image_path == Path("b.jpg")
+    for index in range(len(scenes) - 1):
+        if scenes[index].image_path and scenes[index + 1].image_path:
+            if len(images) > 1:
+                assert scenes[index].image_path != scenes[index + 1].image_path
+
+
+def test_plan_video_scenes_assigns_motion_and_overlay():
+    sections = [{"label": "Hook", "text": "Anthropic announces safety update"}]
+    images = [Path("a.jpg")]
+    scenes = plan_video_scenes(sections, total_duration_seconds=9.0, story_title="Anthropic Safety", image_paths=images)
+
+    assert scenes[0].animation_type in {"zoom_in", "zoom_out", "pan_left", "pan_right"}
+    assert scenes[0].text_overlay is not None

@@ -63,14 +63,34 @@ def _build_entity_queries(title_tokens: list[str]) -> list[str]:
     queries: list[str] = []
     joined = " ".join(title_tokens).lower()
 
-    if "amazon" in joined:
-        queries.extend(["Amazon corporate office", "Amazon CEO business meeting"])
-    if "anthropic" in joined or "ai model" in joined or "artificial intelligence" in joined:
-        queries.extend(["artificial intelligence server room", "AI technology regulation"])
-    if "official" in joined or "government" in joined or "u.s" in joined or "us" in joined:
-        queries.extend(["government officials meeting technology", "US Capitol technology policy"])
+    entity_visuals = {
+        "openai": ["ChatGPT interface", "AI neural network", "developer coding AI"],
+        "anthropic": ["AI safety research lab", "artificial intelligence server room", "AI ethics technology"],
+        "google": ["Google Gemini AI", "Android technology", "data center cloud computing"],
+        "gemini": ["Google Gemini AI interface", "AI assistant technology"],
+        "gpt": ["ChatGPT interface", "AI language model visualization"],
+        "claude": ["AI assistant interface", "enterprise AI software"],
+        "tesla": ["Tesla electric vehicle", "Tesla factory automation", "EV charging station"],
+        "nvidia": ["NVIDIA GPU data center", "AI chip technology", "machine learning hardware"],
+        "robot": ["humanoid robot technology", "factory automation robot arm"],
+        "robotics": ["robotics laboratory", "autonomous robot warehouse"],
+        "amazon": ["Amazon corporate technology", "cloud computing data center"],
+        "meta": ["virtual reality headset technology", "metaverse digital network"],
+        "microsoft": ["cloud computing server room", "enterprise software developer"],
+        "startup": ["technology startup office", "innovation brainstorming team"],
+        "ev": ["electric vehicle charging", "battery factory technology"],
+        "chip": ["semiconductor fabrication", "computer chip macro"],
+        "regulation": ["government technology policy meeting", "capitol building technology"],
+    }
+
+    for keyword, visuals in entity_visuals.items():
+        if keyword in joined:
+            queries.extend(visuals[:2])
+
     if "ceo" in joined:
-        queries.append("CEO business meeting corporate")
+        queries.append("CEO technology keynote presentation")
+    if "launch" in joined or "release" in joined:
+        queries.append("product launch technology event")
 
     return queries
 
@@ -85,4 +105,10 @@ def score_image_relevance(story_title: str, alt_text: str, query: str) -> float:
         return 0.0
 
     overlap = len(story_tokens & combined_tokens)
-    return overlap / len(story_tokens)
+    score = overlap / len(story_tokens)
+    if "generic" in alt_text.lower() or "business handshake" in alt_text.lower():
+        score -= 0.4
+    if "unrelated" in alt_text.lower():
+        score -= 0.5
+
+    return max(0.0, min(1.0, score))

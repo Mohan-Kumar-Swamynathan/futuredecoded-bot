@@ -35,8 +35,9 @@ def test_synthesise_voice_writes_srt(
     mock_mix_bgm: MagicMock,
     tmp_path: Path,
 ):
-    async def write_audio(_script_text: str, output_path: Path) -> None:
+    async def write_audio(_script_text: str, output_path: Path):
         output_path.write_bytes(b"fake-audio")
+        return []
 
     mock_synthesise.side_effect = write_audio
 
@@ -51,7 +52,7 @@ def test_synthesise_voice_writes_srt(
 
     assert voice_path == output_path
     assert duration == 12.5
-    assert output_path.with_suffix(".srt").exists()
+    assert output_path.with_suffix(".ass").exists()
     mock_synthesise.assert_awaited_once()
     mock_mix_bgm.assert_called_once()
 

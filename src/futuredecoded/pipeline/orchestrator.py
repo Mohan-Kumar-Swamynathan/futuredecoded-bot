@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from futuredecoded.analytics.analytics_engine import generate_weekly_report, store_analytics_snapshot
 from futuredecoded.analytics.learning_engine import analyse_and_update_preferences
-from futuredecoded.config.channel_profile import ContentFormat, THUMBNAIL_VARIANT_COUNT
+from futuredecoded.config.channel_profile import ContentFormat, MAX_IMAGES_LONG, MAX_IMAGES_SHORT, THUMBNAIL_VARIANT_COUNT
 from futuredecoded.config.settings import get_settings
 from futuredecoded.database.models import StoryRecord, get_session, init_database
 from futuredecoded.discovery.trend_engine import discover_ranked_stories
@@ -189,7 +189,7 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         story_title=story.title,
         outline=scripts.outline,
         sections=scripts.script_sections,
-        max_images=8,
+        max_images=MAX_IMAGES_LONG,
         orientation="landscape",
     )
     visuals_short = collect_visuals_for_story(
@@ -197,7 +197,7 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         story_title=story.title,
         outline=scripts.outline,
         sections=scripts.script_short_sections,
-        max_images=4,
+        max_images=MAX_IMAGES_SHORT,
         orientation="portrait",
     )
     visuals_long = _order_images_for_sections(visuals_long, scripts.script_sections)
@@ -238,14 +238,15 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
             hashtags=seo.long_form.get("hashtags"),
         )
         _save_description(output_dir, "description_long.txt", long_description)
-        srt_long = voice_long.with_suffix(".srt")
+        caption_long = voice_long.with_suffix(".ass")
         video_long = build_long_video(
             scripts.script_long,
             voice_long,
             visuals_long,
             output_dir / "video_long.mp4",
-            srt_long,
+            caption_long,
             sections=scripts.script_sections,
+            story_title=story.title,
         )
         long_title = seo.long_form.get("title", story.title)
         thumb_concepts = _collect_thumbnail_concepts(long_title, seo.long_form)
@@ -295,14 +296,15 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
             chapters=chapters_short,
         )
         _save_description(output_dir, "description_short.txt", shorts_description)
-        srt_short = voice_short.with_suffix(".srt")
+        caption_short = voice_short.with_suffix(".ass")
         video_short = build_short_video(
             scripts.script_short,
             voice_short,
             visuals_short,
             output_dir / "video_short.mp4",
-            srt_short,
+            caption_short,
             sections=scripts.script_short_sections,
+            story_title=story.title,
         )
         short_title = seo.shorts.get("title", f"{story.title[:50]} #Shorts")
         short_thumb_concepts = _collect_thumbnail_concepts(short_title, seo.shorts)

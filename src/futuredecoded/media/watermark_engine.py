@@ -78,8 +78,10 @@ def apply_watermark_to_video(
     output_path: Path,
     width: int,
     height: int,
+    caption_path: Path | None = None,
     srt_path: Path | None = None,
 ) -> bool:
+    resolved_caption_path = caption_path or srt_path
     watermark_path = ensure_watermark_asset()
     if not watermark_path.exists():
         logger.warning("Watermark asset missing — skipping overlay")
@@ -90,18 +92,21 @@ def apply_watermark_to_video(
     if height > width:
         overlay_y = str(WATERMARK_MARGIN_PX)
 
-    if srt_path and srt_path.exists():
-        srt_escaped = str(srt_path).replace(":", r"\:")
-        subtitle_style = (
-            "FontName=DejaVu Sans Bold,FontSize=28,PrimaryColour=&H00FFFFFF,"
-            "OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=70,Alignment=2,Bold=1"
-        )
-        video_filter = (
-            f"[0:v]subtitles={srt_escaped}:force_style='{subtitle_style}'[subbed];"
-            f"[subbed][1:v]overlay={overlay_x}:{overlay_y}:format=auto:shortest=1[vout]"
-        )
-    else:
-        video_filter = f"[0:v][1:v]overlay={overlay_x}:{overlay_y}:format=auto:shortest=1[vout]"
+    subtitle_stage = "[0:v]"
+    if resolved_caption_path and resolved_caption_path.exists():
+        escaped_caption = str(resolved_caption_path).replace(":", r"\:")
+        if resolved_caption_path.suffix.lower() == ".ass":
+            subtitle_stage = f"[0:v]ass={escaped_caption}[subbed];[subbed]"
+        else:
+            subtitle_style = (
+                "FontName=DejaVu Sans Bold,FontSize=42,PrimaryColour=&H00FFFFFF,"
+                "OutlineColour=&H00000000,Outline=3,Shadow=1,MarginV=90,Alignment=2,Bold=1"
+            )
+            subtitle_stage = (
+                f"[0:v]subtitles={escaped_caption}:force_style='{subtitle_style}'[subbed];[subbed]"
+            )
+
+    video_filter = f"{subtitle_stage}[1:v]overlay={overlay_x}:{overlay_y}:format=auto:shortest=1[vout]"
 
     command = [
         "ffmpeg",
@@ -121,7 +126,7 @@ def apply_watermark_to_video(
         "-preset",
         "veryfast",
         "-crf",
-        "23",
+        "22",
         "-c:a",
         "copy",
         str(output_path),

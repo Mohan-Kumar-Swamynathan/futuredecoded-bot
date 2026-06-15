@@ -1,4 +1,4 @@
-"""Voice generation — Edge TTS primary, Gemini TTS fallback, BGM mix."""
+"""Voice generation — Edge TTS primary, Gemini TTS fallback, BGM mix, word captions."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from futuredecoded.config.channel_profile import EDGE_TTS_PITCH, EDGE_TTS_RATE, 
 from futuredecoded.config.settings import get_settings
 from futuredecoded.media.audio_mixer import mix_narration_with_bgm
 from futuredecoded.media.audio_utils import get_audio_duration
+from futuredecoded.media.caption_engine import WordTiming, build_ass_from_srt, build_ass_subtitles, save_word_timings
 from futuredecoded.media.gemini_tts_engine import synthesise_voice_with_gemini
 
 logger = logging.getLogger("futuredecoded.media.voice")
@@ -41,7 +42,7 @@ def sanitize_script_for_tts(script_text: str) -> str:
     return cleaned.strip()
 
 
-def _generate_srt(script_text: str, duration: float, words_per_segment: int = 12) -> str:
+def _generate_srt(script_text: str, duration: float, words_per_segment: int = 8) -> str:
     words = script_text.split()
     segments = [
         " ".join(words[index : index + words_per_segment])
@@ -78,7 +79,7 @@ def _format_timestamp(seconds: float) -> str:
     retry=retry_if_exception_type((OSError, TimeoutError, RuntimeError)),
     reraise=True,
 )
-async def _synthesise_voice_async(script_text: str, output_path: Path) -> None:
+async def _synthesise_voice_async(script_text: str, output_path: Path) -> list[WordTiming]:
     communicate = edge_tts.Communicate(
         script_text,
         voice=EDGE_TTS_VOICE,
@@ -86,16 +87,38 @@ async def _synthesise_voice_async(script_text: str, output_path: Path) -> None:
         pitch=EDGE_TTS_PITCH,
         receive_timeout=120,
     )
-    await communicate.save(str(output_path))
+    submaker = edge_tts.SubMaker()
+    word_timings: list[WordTiming] = []
+
+    with open(output_path, "wb") as audio_file:
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_file.write(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                submaker.create_sub((chunk["offset"], chunk["duration"]), chunk["text"])
+                start_seconds = chunk["offset"] / 10_000_000
+                end_seconds = (chunk["offset"] + chunk["duration"]) / 10_000_000
+                word_timings.append(
+                    WordTiming(
+                        start_seconds=start_seconds,
+                        end_seconds=end_seconds,
+                        text=str(chunk["text"]),
+                    )
+                )
+
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError("Edge TTS produced an empty audio file")
 
+    srt_path = output_path.with_suffix(".srt")
+    srt_path.write_text(submaker.generate_subs(), encoding="utf-8")
+    return word_timings
 
-def _synthesise_narration_track(cleaned_script: str, narration_path: Path) -> None:
+
+def _synthesise_narration_track(cleaned_script: str, narration_path: Path) -> list[WordTiming]:
     try:
-        asyncio.run(_synthesise_voice_async(cleaned_script, narration_path))
-        logger.info("Voice synthesised with Edge TTS")
-        return
+        word_timings = asyncio.run(_synthesise_voice_async(cleaned_script, narration_path))
+        logger.info("Voice synthesised with Edge TTS (%d word timings)", len(word_timings))
+        return word_timings
     except Exception as edge_error:
         settings = get_settings()
         if not settings.gemini_api_key:
@@ -103,6 +126,30 @@ def _synthesise_narration_track(cleaned_script: str, narration_path: Path) -> No
         logger.warning("Edge TTS failed, falling back to Gemini TTS: %s", str(edge_error)[:200])
         synthesise_voice_with_gemini(cleaned_script, narration_path)
         logger.info("Voice synthesised with Gemini TTS fallback")
+        return []
+
+
+def _write_caption_files(
+    cleaned_script: str,
+    output_path: Path,
+    duration: float,
+    word_timings: list[WordTiming],
+    play_res_x: int,
+    play_res_y: int,
+) -> Path:
+    srt_path = output_path.with_suffix(".srt")
+    ass_path = output_path.with_suffix(".ass")
+
+    if word_timings:
+        save_word_timings(word_timings, output_path.with_suffix(".word_timings.json"))
+        build_ass_subtitles(word_timings, ass_path, play_res_x=play_res_x, play_res_y=play_res_y)
+        if not srt_path.exists():
+            srt_path.write_text(_generate_srt(cleaned_script, duration), encoding="utf-8")
+        return ass_path
+
+    if not srt_path.exists():
+        srt_path.write_text(_generate_srt(cleaned_script, duration), encoding="utf-8")
+    return build_ass_from_srt(srt_path, ass_path, play_res_x=play_res_x, play_res_y=play_res_y)
 
 
 def synthesise_voice(
@@ -124,7 +171,7 @@ def synthesise_voice(
     )
 
     narration_path = output_path.with_name(f"{output_path.stem}_narration{output_path.suffix}")
-    _synthesise_narration_track(cleaned_script, narration_path)
+    word_timings = _synthesise_narration_track(cleaned_script, narration_path)
 
     if mix_bgm:
         try:
@@ -136,12 +183,19 @@ def synthesise_voice(
         shutil.copy(narration_path, output_path)
 
     final_audio_path = output_path
-
     duration = get_audio_duration(final_audio_path)
     if duration <= 0:
         raise RuntimeError(f"Generated audio has invalid duration: {final_audio_path}")
 
-    srt_path = output_path.with_suffix(".srt")
-    srt_path.write_text(_generate_srt(cleaned_script, duration), encoding="utf-8")
-    logger.info("Voice ready: %s (%.1fs)", final_audio_path.name, duration)
+    play_res_x = 1080 if format_type == "short" else 1920
+    play_res_y = 1920 if format_type == "short" else 1080
+    caption_path = _write_caption_files(
+        cleaned_script,
+        output_path,
+        duration,
+        word_timings,
+        play_res_x=play_res_x,
+        play_res_y=play_res_y,
+    )
+    logger.info("Voice ready: %s (%.1fs, captions=%s)", final_audio_path.name, duration, caption_path.name)
     return final_audio_path, duration
