@@ -173,8 +173,18 @@ def upload_video(
                 videoId=video_id,
                 media_body=MediaFileUpload(str(thumbnail_path)),
             ).execute()
+            logger.info("Thumbnail uploaded for video %s", video_id)
         except Exception as exc:
-            logger.warning("Thumbnail upload failed: %s", exc)
+            error_text = str(exc)
+            if "403" in error_text and "thumbnail" in error_text.lower():
+                logger.warning(
+                    "Custom thumbnail skipped — YouTube requires channel verification "
+                    "(1,000+ subscribers) for custom thumbnails. Video uploaded successfully: "
+                    "https://youtu.be/%s",
+                    video_id,
+                )
+            else:
+                logger.warning("Thumbnail upload failed: %s", exc)
 
     record_upload(title, script, video_id, format_type)
     return video_id

@@ -13,17 +13,20 @@ logger = logging.getLogger("futuredecoded.editorial.strategist")
 
 
 def decide_format(story: ScoredStory) -> ContentFormat:
+    """Recommend a format — daily pipeline always publishes both."""
     title_lower = story.title.lower()
-    if any(word in title_lower for word in ("launch", "released", "gpt", "gemini", "claude")):
+    ai_news_signals = (
+        "anthropic", "openai", "claude", "gpt", "gemini", "google", "nvidia",
+        "meta", "microsoft", "ai", "safety", "launch", "released", "announced",
+    )
+    if any(signal in title_lower for signal in ai_news_signals):
         return ContentFormat.BOTH
-    if any(word in title_lower for word in ("breaking", "just", "announced")):
-        return ContentFormat.SHORT
+    if any(word in title_lower for word in ("breaking", "just")):
+        return ContentFormat.BOTH
     if any(word in title_lower for word in ("how", "explained", "guide", "works")):
         return ContentFormat.LONG
     if story.recommended_format == "both":
         return ContentFormat.BOTH
-    if story.recommended_format == "shorts":
-        return ContentFormat.SHORT
     return ContentFormat.BOTH
 
 

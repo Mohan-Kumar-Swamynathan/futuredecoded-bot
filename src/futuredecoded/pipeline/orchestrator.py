@@ -160,7 +160,13 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         output_dir=output_dir,
     )
 
-    content_format = decide_format(story)
+    recommended_format = decide_format(story)
+    content_format = ContentFormat.BOTH
+    logger.info(
+        "Daily publish format: both (recommended=%s, story_score=%.1f)",
+        recommended_format.value,
+        story.trend_score,
+    )
     scripts = generate_scripts(story.title, story.url, output_dir, research=research)
 
     compliance = validate_script_compliance(

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("futuredecoded.editorial.compliance")
 
+MIN_LONG_SCRIPT_WORDS = 400
+
 REQUIRED_SECTION_LABELS = (
     "hook",
     "background",
@@ -52,8 +54,10 @@ def validate_script_compliance(
     issues: list[str] = []
     word_count = len(script_long.split())
 
-    if word_count < 400:
-        issues.append(f"Script too short for monetization-safe analysis ({word_count} words, min 400)")
+    if word_count < MIN_LONG_SCRIPT_WORDS:
+        issues.append(
+            f"Script too short for monetization-safe analysis ({word_count} words, min {MIN_LONG_SCRIPT_WORDS})"
+        )
 
     if word_count > 950:
         issues.append(f"Script too long ({word_count} words, target 600-900)")
