@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from futuredecoded.config.channel_profile import DEFAULT_LANGUAGE, YOUTUBE_CATEGORY_ID
+from futuredecoded.config.channel_profile import DEFAULT_LANGUAGE, UPLOAD_CUSTOM_THUMBNAILS, YOUTUBE_CATEGORY_ID
 from futuredecoded.config.settings import get_settings
 from futuredecoded.database.models import UploadHistoryRecord, get_session
 from futuredecoded.publish.schedule_planner import format_publish_at_for_youtube
@@ -167,7 +167,7 @@ def upload_video(
     else:
         logger.info("Uploaded: https://youtu.be/%s", video_id)
 
-    if thumbnail_path and thumbnail_path.exists():
+    if UPLOAD_CUSTOM_THUMBNAILS and thumbnail_path and thumbnail_path.exists():
         try:
             youtube.thumbnails().set(
                 videoId=video_id,
@@ -175,16 +175,12 @@ def upload_video(
             ).execute()
             logger.info("Thumbnail uploaded for video %s", video_id)
         except Exception as exc:
-            error_text = str(exc)
-            if "403" in error_text and "thumbnail" in error_text.lower():
-                logger.warning(
-                    "Custom thumbnail skipped — YouTube requires channel verification "
-                    "(1,000+ subscribers) for custom thumbnails. Video uploaded successfully: "
-                    "https://youtu.be/%s",
-                    video_id,
-                )
-            else:
-                logger.warning("Thumbnail upload failed: %s", exc)
+            logger.warning("Thumbnail upload failed (video already uploaded): %s", exc)
+    elif thumbnail_path and thumbnail_path.exists():
+        logger.info(
+            "Custom thumbnail upload skipped — using YouTube auto thumbnail for https://youtu.be/%s",
+            video_id,
+        )
 
     record_upload(title, script, video_id, format_type)
     return video_id

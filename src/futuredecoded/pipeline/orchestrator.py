@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from futuredecoded.analytics.analytics_engine import generate_weekly_report, store_analytics_snapshot
 from futuredecoded.analytics.learning_engine import analyse_and_update_preferences
-from futuredecoded.config.channel_profile import ContentFormat, MAX_IMAGES_LONG, MAX_IMAGES_SHORT, THUMBNAIL_VARIANT_COUNT
+from futuredecoded.config.channel_profile import ContentFormat, MAX_IMAGES_LONG, MAX_IMAGES_SHORT
 from futuredecoded.config.settings import get_settings
 from futuredecoded.database.models import StoryRecord, get_session, init_database
 from futuredecoded.discovery.trend_engine import discover_ranked_stories
@@ -19,7 +19,6 @@ from futuredecoded.editorial.compliance_guard import validate_script_compliance
 from futuredecoded.editorial.content_strategist import decide_format
 from futuredecoded.editorial.fact_checker import verify_story
 from futuredecoded.editorial.script_generator import generate_scripts
-from futuredecoded.media.thumbnail_engine import generate_thumbnail, generate_thumbnail_variants
 from futuredecoded.media.video_engine import build_long_video, build_short_video
 from futuredecoded.media.visual_collector import collect_visuals_for_story
 from futuredecoded.media.voice_engine import synthesise_voice
@@ -72,14 +71,6 @@ def _save_description(output_dir: Path, filename: str, description: str) -> None
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^\w\s-]", "", text.lower())
     return re.sub(r"[-\s]+", "-", slug).strip("-")[:60]
-
-
-def _collect_thumbnail_concepts(primary_title: str, seo_payload: dict) -> list[str]:
-    concepts = [primary_title]
-    for alt_title in seo_payload.get("alternative_titles", []):
-        if alt_title and alt_title not in concepts:
-            concepts.append(str(alt_title))
-    return concepts[:THUMBNAIL_VARIANT_COUNT]
 
 
 def _attempt_fact_check(
@@ -252,26 +243,13 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         )
         long_video_path = video_long
         long_title = seo.long_form.get("title", story.title)
-        thumb_concepts = _collect_thumbnail_concepts(long_title, seo.long_form)
-        thumb_variants = generate_thumbnail_variants(
-            video_long or output_dir / "video_long.mp4",
-            thumb_concepts,
-            output_dir / "thumbnails_long",
-            hero_image=hero_image,
-        )
-        thumb_long = thumb_variants[0] if thumb_variants else generate_thumbnail(
-            video_long or output_dir / "video_long.mp4",
-            long_title[:20],
-            output_dir / "thumbnail_long.png",
-            hero_image=hero_image,
-        )
         if upload and video_long:
             long_video_id = upload_video(
                 video_path=video_long,
                 title=long_title,
                 description=long_description,
                 tags=seo.long_form.get("tags", []),
-                thumbnail_path=thumb_long,
+                thumbnail_path=None,
                 format_type="long",
                 script=scripts.script_long,
                 publish_at_utc=long_publish_at,
@@ -311,27 +289,13 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         )
         short_video_path = video_short
         short_title = seo.shorts.get("title", f"{story.title[:50]} #Shorts")
-        short_thumb_concepts = _collect_thumbnail_concepts(short_title, seo.shorts)
-        short_hero = visuals_short[0] if visuals_short else hero_image
-        thumb_variants_short = generate_thumbnail_variants(
-            video_short or output_dir / "video_short.mp4",
-            short_thumb_concepts,
-            output_dir / "thumbnails_short",
-            hero_image=short_hero,
-        )
-        thumb_short = thumb_variants_short[0] if thumb_variants_short else generate_thumbnail(
-            video_short or output_dir / "video_short.mp4",
-            short_title[:15],
-            output_dir / "thumbnail_short.png",
-            hero_image=short_hero,
-        )
         if upload and video_short:
             short_video_id = upload_video(
                 video_path=video_short,
                 title=short_title,
                 description=shorts_description,
                 tags=seo.shorts.get("tags", []),
-                thumbnail_path=thumb_short,
+                thumbnail_path=None,
                 format_type="short",
                 script=scripts.script_short,
                 publish_at_utc=short_publish_at,

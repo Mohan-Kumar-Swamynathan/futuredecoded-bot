@@ -34,8 +34,6 @@ def _make_story(title: str, score: float, source: str = "google_news") -> Scored
 @patch("futuredecoded.pipeline.orchestrator.store_analytics_snapshot")
 @patch("futuredecoded.pipeline.orchestrator.upload_video")
 @patch("futuredecoded.pipeline.orchestrator.publish_social_posts")
-@patch("futuredecoded.pipeline.orchestrator.generate_thumbnail_variants", return_value=[])
-@patch("futuredecoded.pipeline.orchestrator.generate_thumbnail", return_value=None)
 @patch("futuredecoded.pipeline.orchestrator.build_short_video", return_value=Path("short.mp4"))
 @patch("futuredecoded.pipeline.orchestrator.build_long_video", return_value=Path("long.mp4"))
 @patch("futuredecoded.pipeline.orchestrator.synthesise_voice")
@@ -61,8 +59,6 @@ def test_run_daily_pipeline_retries_until_fact_check_passes(
     mock_voice,
     _mock_long_video,
     _mock_short_video,
-    _mock_thumb,
-    _mock_thumb_variants,
     _mock_social,
     mock_upload,
     _mock_analytics,
