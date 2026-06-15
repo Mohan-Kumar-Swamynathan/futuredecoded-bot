@@ -7,14 +7,27 @@ import pytest
 from futuredecoded.llm.provider_client import ProviderClient
 
 
-def test_build_chain_includes_github_models_when_token_set():
+def test_build_chain_includes_github_models_when_token_set(monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     client = ProviderClient(
         gemini_key="gemini-key",
         groq_key="groq-key",
         github_models_token="ghp_test_token",
     )
-    assert "github_models" in client._providers
     assert client._providers.index("github_models") > client._providers.index("groq")
+    assert client._providers.index("gemini") < client._providers.index("github_models")
+
+
+def test_build_chain_prioritizes_github_models_in_ci(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    client = ProviderClient(
+        gemini_key="gemini-key",
+        groq_key="groq-key",
+        github_models_token="ghp_test_token",
+    )
+    assert client._providers[0] == "github_models"
+    assert "gemini" in client._providers
+    assert "groq" in client._providers
 
 
 def test_build_chain_skips_github_models_without_token():
