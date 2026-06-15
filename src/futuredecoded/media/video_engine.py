@@ -10,6 +10,7 @@ from pathlib import Path
 
 from futuredecoded.config.channel_profile import LONG_FORM_SPEC, SHORTS_SPEC, VIDEO_EXPORT_FPS
 from futuredecoded.media.audio_utils import get_audio_duration
+from futuredecoded.media.font_resolver import escape_ffmpeg_path
 from futuredecoded.media.overlay_engine import build_overlay_drawtext_filter
 from futuredecoded.media.quality_checker import validate_video_output
 from futuredecoded.media.scene_planner import VideoScene, export_scene_manifest, plan_video_scenes
@@ -183,6 +184,43 @@ def _render_single_segment(
     width: int,
     height: int,
 ) -> bool:
+    if _render_segment_with_ffmpeg(
+        image_path,
+        clip_path,
+        segment_duration,
+        animation_type,
+        overlay_text,
+        is_hook_scene,
+        width,
+        height,
+    ):
+        return True
+
+    if overlay_text:
+        logger.warning("Segment render failed with overlay — retrying without text overlay")
+        return _render_segment_with_ffmpeg(
+            image_path,
+            clip_path,
+            segment_duration,
+            animation_type,
+            overlay_text=None,
+            is_hook_scene=False,
+            width=width,
+            height=height,
+        )
+    return False
+
+
+def _render_segment_with_ffmpeg(
+    image_path: Path,
+    clip_path: Path,
+    segment_duration: float,
+    animation_type: str,
+    overlay_text: str | None,
+    is_hook_scene: bool,
+    width: int,
+    height: int,
+) -> bool:
     frame_count = max(int(segment_duration * VIDEO_EXPORT_FPS), VIDEO_EXPORT_FPS * 3)
     motion_filter = _build_motion_filter(animation_type, frame_count, width, height)
     fade_out_start = max(0.0, segment_duration - FADE_DURATION_SECONDS)
@@ -333,15 +371,12 @@ def _finalize_video(
 
 
 def _burn_captions(video_path: Path, caption_path: Path, output_path: Path) -> bool:
-    escaped_path = str(caption_path).replace(":", r"\:")
-    if caption_path.suffix.lower() == ".ass":
-        video_filter = f"ass={escaped_path}"
-    else:
-        subtitle_style = (
-            "FontName=DejaVu Sans Bold,FontSize=42,PrimaryColour=&H00FFFFFF,"
-            "OutlineColour=&H00000000,Outline=3,Shadow=1,MarginV=90,Alignment=2,Bold=1"
-        )
-        video_filter = f"subtitles={escaped_path}:force_style='{subtitle_style}'"
+    escaped_path = escape_ffmpeg_path(caption_path)
+    subtitle_style = (
+        "FontName=DejaVu Sans Bold,FontSize=42,PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,Outline=3,Shadow=1,MarginV=90,Alignment=2,Bold=1"
+    )
+    video_filter = f"subtitles='{escaped_path}':force_style='{subtitle_style}'"
 
     command = [
         "ffmpeg",

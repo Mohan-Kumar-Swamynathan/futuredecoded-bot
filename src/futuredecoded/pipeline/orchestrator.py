@@ -217,6 +217,8 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
 
     long_video_id = None
     short_video_id = None
+    long_video_path: Path | None = None
+    short_video_path: Path | None = None
 
     if content_format in (ContentFormat.LONG, ContentFormat.BOTH):
         voice_long, duration_long = synthesise_voice(
@@ -248,6 +250,7 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
             sections=scripts.script_sections,
             story_title=story.title,
         )
+        long_video_path = video_long
         long_title = seo.long_form.get("title", story.title)
         thumb_concepts = _collect_thumbnail_concepts(long_title, seo.long_form)
         thumb_variants = generate_thumbnail_variants(
@@ -306,6 +309,7 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
             sections=scripts.script_short_sections,
             story_title=story.title,
         )
+        short_video_path = video_short
         short_title = seo.shorts.get("title", f"{story.title[:50]} #Shorts")
         short_thumb_concepts = _collect_thumbnail_concepts(short_title, seo.shorts)
         short_hero = visuals_short[0] if visuals_short else hero_image
@@ -340,6 +344,24 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
     generate_weekly_report(settings.base_dir / "outputs" / "weekly_report.html")
     analyse_and_update_preferences(settings.base_dir / "outputs" / "learning_insights.json")
 
+    pipeline_error = _validate_pipeline_outputs(
+        content_format=content_format,
+        upload=upload,
+        long_video_path=long_video_path,
+        short_video_path=short_video_path,
+        long_video_id=long_video_id,
+        short_video_id=short_video_id,
+    )
+    if pipeline_error:
+        return PipelineResult(
+            False,
+            story.title,
+            output_dir,
+            long_video_id=long_video_id,
+            short_video_id=short_video_id,
+            error=pipeline_error,
+        )
+
     return PipelineResult(
         success=True,
         story_title=story.title,
@@ -347,6 +369,37 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         long_video_id=long_video_id,
         short_video_id=short_video_id,
     )
+
+
+def _validate_pipeline_outputs(
+    content_format: ContentFormat,
+    upload: bool,
+    long_video_path: Path | None,
+    short_video_path: Path | None,
+    long_video_id: str | None,
+    short_video_id: str | None,
+) -> str:
+    if content_format != ContentFormat.BOTH:
+        return ""
+
+    if upload:
+        missing: list[str] = []
+        if not long_video_id:
+            missing.append("long-form upload")
+        if not short_video_id:
+            missing.append("Shorts upload")
+        if missing:
+            return f"Expected both formats but missing: {', '.join(missing)}"
+        return ""
+
+    missing_files: list[str] = []
+    if not long_video_path or not long_video_path.exists():
+        missing_files.append("long-form video file")
+    if not short_video_path or not short_video_path.exists():
+        missing_files.append("Shorts video file")
+    if missing_files:
+        return f"Expected both formats but missing: {', '.join(missing_files)}"
+    return ""
 
 
 def _persist_story(story: ScoredStory, output_dir: Path) -> None:

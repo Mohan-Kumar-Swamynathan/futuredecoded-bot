@@ -110,7 +110,9 @@ async def _synthesise_voice_async(script_text: str, output_path: Path) -> list[W
         raise RuntimeError("Edge TTS produced an empty audio file")
 
     srt_path = output_path.with_suffix(".srt")
-    srt_path.write_text(submaker.generate_subs(), encoding="utf-8")
+    srt_content = submaker.generate_subs()
+    if srt_content.strip():
+        srt_path.write_text(srt_content, encoding="utf-8")
     return word_timings
 
 
@@ -147,9 +149,11 @@ def _write_caption_files(
             srt_path.write_text(_generate_srt(cleaned_script, duration), encoding="utf-8")
         return ass_path
 
-    if not srt_path.exists():
-        srt_path.write_text(_generate_srt(cleaned_script, duration), encoding="utf-8")
-    return build_ass_from_srt(srt_path, ass_path, play_res_x=play_res_x, play_res_y=play_res_y)
+    if not word_timings:
+        save_word_timings([], output_path.with_suffix(".word_timings.json"))
+        if not srt_path.exists():
+            srt_path.write_text(_generate_srt(cleaned_script, duration), encoding="utf-8")
+        return build_ass_from_srt(srt_path, ass_path, play_res_x=play_res_x, play_res_y=play_res_y)
 
 
 def synthesise_voice(
@@ -172,6 +176,11 @@ def synthesise_voice(
 
     narration_path = output_path.with_name(f"{output_path.stem}_narration{output_path.suffix}")
     word_timings = _synthesise_narration_track(cleaned_script, narration_path)
+
+    narration_srt = narration_path.with_suffix(".srt")
+    output_srt = output_path.with_suffix(".srt")
+    if narration_srt.exists() and not output_srt.exists():
+        shutil.copy(narration_srt, output_srt)
 
     if mix_bgm:
         try:

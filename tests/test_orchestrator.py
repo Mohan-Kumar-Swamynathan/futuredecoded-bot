@@ -112,7 +112,7 @@ def test_run_daily_pipeline_retries_until_fact_check_passes(
         keywords={},
     )
     mock_voice.return_value = (tmp_path / "voice.mp3", 120.0)
-    mock_upload.return_value = "video123"
+    mock_upload.side_effect = ["long123", "short456"]
 
     result = run_daily_pipeline(upload=True)
 

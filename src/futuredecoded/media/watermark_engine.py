@@ -14,6 +14,7 @@ from futuredecoded.config.channel_profile import (
     WATERMARK_OPACITY,
 )
 from futuredecoded.config.settings import get_settings
+from futuredecoded.media.font_resolver import escape_ffmpeg_path
 
 logger = logging.getLogger("futuredecoded.media.watermark")
 
@@ -21,6 +22,11 @@ FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
+)
+
+SUBTITLE_STYLE = (
+    "FontName=DejaVu Sans Bold,FontSize=42,PrimaryColour=&H00FFFFFF,"
+    "OutlineColour=&H00000000,Outline=3,Shadow=1,MarginV=90,Alignment=2,Bold=1"
 )
 
 
@@ -92,22 +98,63 @@ def apply_watermark_to_video(
     if height > width:
         overlay_y = str(WATERMARK_MARGIN_PX)
 
+    caption_for_filter = _prepare_caption_path(resolved_caption_path)
     subtitle_stage = "[0:v]"
-    if resolved_caption_path and resolved_caption_path.exists():
-        escaped_caption = str(resolved_caption_path).replace(":", r"\:")
-        if resolved_caption_path.suffix.lower() == ".ass":
-            subtitle_stage = f"[0:v]ass={escaped_caption}[subbed];[subbed]"
-        else:
-            subtitle_style = (
-                "FontName=DejaVu Sans Bold,FontSize=42,PrimaryColour=&H00FFFFFF,"
-                "OutlineColour=&H00000000,Outline=3,Shadow=1,MarginV=90,Alignment=2,Bold=1"
-            )
-            subtitle_stage = (
-                f"[0:v]subtitles={escaped_caption}:force_style='{subtitle_style}'[subbed];[subbed]"
-            )
+    if caption_for_filter and caption_for_filter.exists():
+        escaped_caption = escape_ffmpeg_path(caption_for_filter)
+        subtitle_stage = (
+            f"[0:v]subtitles='{escaped_caption}':force_style='{SUBTITLE_STYLE}'[subbed];[subbed]"
+        )
 
     video_filter = f"{subtitle_stage}[1:v]overlay={overlay_x}:{overlay_y}:format=auto:shortest=1[vout]"
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(watermark_path),
+        "-filter_complex",
+        video_filter,
+        "-map",
+        "[vout]",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "22",
+        "-c:a",
+        "copy",
+        str(output_path),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=600, check=False)
+    if result.returncode == 0:
+        logger.info("Applied channel watermark: %s", output_path.name)
+        return True
 
+    logger.warning("Watermark+caption overlay failed, retrying watermark only: %s", result.stderr[-250:])
+    return _apply_watermark_only(video_path, output_path, watermark_path, overlay_x, overlay_y)
+
+
+def _prepare_caption_path(caption_path: Path | None) -> Path | None:
+    if caption_path is None or not caption_path.exists():
+        return None
+    if caption_path.stat().st_size == 0:
+        return None
+    return caption_path
+
+
+def _apply_watermark_only(
+    video_path: Path,
+    output_path: Path,
+    watermark_path: Path,
+    overlay_x: str,
+    overlay_y: str,
+) -> bool:
+    video_filter = f"[0:v][1:v]overlay={overlay_x}:{overlay_y}:format=auto:shortest=1[vout]"
     command = [
         "ffmpeg",
         "-y",
@@ -133,8 +180,7 @@ def apply_watermark_to_video(
     ]
     result = subprocess.run(command, capture_output=True, text=True, timeout=600, check=False)
     if result.returncode != 0:
-        logger.warning("Watermark overlay failed: %s", result.stderr[-300:])
+        logger.warning("Watermark-only overlay failed: %s", result.stderr[-250:])
         return False
-
-    logger.info("Applied channel watermark: %s", output_path.name)
+    logger.info("Applied watermark without captions: %s", output_path.name)
     return True
