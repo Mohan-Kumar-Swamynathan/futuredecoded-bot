@@ -9,7 +9,8 @@ from futuredecoded.media.scene_planner import (
 )
 
 
-def test_plan_video_scenes_uses_hook_fast_cuts():
+def test_plan_video_scenes_uses_hook_fast_cuts(monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     sections = [{"label": "Hook", "text": "OpenAI just launched GPT-5"}]
     images = [Path("img1.jpg"), Path("img2.jpg"), Path("img3.jpg")]
     scenes = plan_video_scenes(sections, total_duration_seconds=20.0, story_title="OpenAI GPT-5", image_paths=images)
@@ -20,7 +21,8 @@ def test_plan_video_scenes_uses_hook_fast_cuts():
     assert all(scene.duration_seconds <= MAX_SCENE_DURATION_SECONDS + 0.01 for scene in scenes)
 
 
-def test_plan_video_scenes_avoids_consecutive_duplicate_images():
+def test_plan_video_scenes_avoids_consecutive_duplicate_images(monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     sections = [{"label": "Hook", "text": "Intro"}]
     images = [Path("a.jpg"), Path("b.jpg")]
     scenes = plan_video_scenes(sections, total_duration_seconds=12.0, story_title="Story", image_paths=images)
@@ -31,7 +33,8 @@ def test_plan_video_scenes_avoids_consecutive_duplicate_images():
                 assert scenes[index].image_path != scenes[index + 1].image_path
 
 
-def test_plan_video_scenes_assigns_motion_and_overlay():
+def test_plan_video_scenes_assigns_motion_and_overlay(monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     sections = [{"label": "Hook", "text": "Anthropic announces safety update"}]
     images = [Path("a.jpg")]
     scenes = plan_video_scenes(sections, total_duration_seconds=9.0, story_title="Anthropic Safety", image_paths=images)

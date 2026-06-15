@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from futuredecoded.media.scene_planner import MAX_SCENE_DURATION_SECONDS
+from futuredecoded.media.video_export_settings import run_black_frame_detection
 
 logger = logging.getLogger("futuredecoded.media.quality")
 
@@ -38,7 +39,7 @@ def validate_video_output(
     if video_path.exists() and not _has_audio_stream(video_path):
         issues.append("Video has no audio stream")
 
-    if video_path.exists() and _detect_black_frames(video_path):
+    if video_path.exists() and run_black_frame_detection() and _detect_black_frames(video_path):
         issues.append("Potential black frames detected")
 
     passed = len(issues) == 0

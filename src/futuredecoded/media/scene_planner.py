@@ -9,13 +9,23 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from futuredecoded.media.video_export_settings import (
+    default_scene_duration_seconds,
+    hook_scene_duration_seconds,
+    hook_window_seconds,
+    max_scene_count,
+    max_scene_duration_seconds,
+    min_scene_duration_seconds,
+)
+
+ANIMATION_CYCLE = ("zoom_in", "zoom_out", "pan_left", "pan_right")
+
+# Backwards-compatible constants for tests and quality checks.
 MAX_SCENE_DURATION_SECONDS = 5.0
 MIN_SCENE_DURATION_SECONDS = 3.0
 DEFAULT_SCENE_DURATION_SECONDS = 4.0
 HOOK_WINDOW_SECONDS = 15.0
 HOOK_SCENE_DURATION_SECONDS = 3.0
-
-ANIMATION_CYCLE = ("zoom_in", "zoom_out", "pan_left", "pan_right")
 
 
 class AnimationType(str, Enum):
@@ -55,7 +65,7 @@ def plan_video_scenes(
         label = str(section.get("label", f"Scene {index + 1}"))
         section_text = str(section.get("text", story_title)).strip()
         elapsed_before_scene = sum(scene_durations[:index])
-        is_hook = elapsed_before_scene < HOOK_WINDOW_SECONDS
+        is_hook = elapsed_before_scene < hook_window_seconds()
         overlay_text = _extract_overlay_text(section_text, story_title) if is_hook or index % 5 == 0 else None
         if is_hook and not overlay_text:
             overlay_text = _extract_overlay_text(story_title, story_title)
@@ -98,15 +108,20 @@ def export_scene_manifest(scenes: list[VideoScene], output_path: Path) -> None:
 def _calculate_scene_durations(total_duration_seconds: float) -> list[float]:
     durations: list[float] = []
     elapsed = 0.0
+    hook_window = hook_window_seconds()
+    hook_scene = hook_scene_duration_seconds()
+    default_scene = default_scene_duration_seconds()
+    max_scene = max_scene_duration_seconds()
+    min_scene = min_scene_duration_seconds()
 
     while elapsed < total_duration_seconds - 0.25:
         remaining = total_duration_seconds - elapsed
-        if elapsed < HOOK_WINDOW_SECONDS:
-            duration = min(HOOK_SCENE_DURATION_SECONDS, remaining, MAX_SCENE_DURATION_SECONDS)
+        if elapsed < hook_window:
+            duration = min(hook_scene, remaining, max_scene)
         else:
-            duration = min(DEFAULT_SCENE_DURATION_SECONDS, remaining, MAX_SCENE_DURATION_SECONDS)
-        duration = max(min(duration, MAX_SCENE_DURATION_SECONDS), min(MIN_SCENE_DURATION_SECONDS, remaining))
-        if remaining < MIN_SCENE_DURATION_SECONDS:
+            duration = min(default_scene, remaining, max_scene)
+        duration = max(min(duration, max_scene), min(min_scene, remaining))
+        if remaining < min_scene:
             duration = remaining
         durations.append(round(duration, 2))
         elapsed += duration
@@ -114,7 +129,28 @@ def _calculate_scene_durations(total_duration_seconds: float) -> list[float]:
     if durations and elapsed < total_duration_seconds:
         durations[-1] = round(durations[-1] + (total_duration_seconds - elapsed), 2)
 
+    scene_limit = max_scene_count()
+    if scene_limit is not None and len(durations) > scene_limit:
+        durations = _merge_scene_durations_to_limit(durations, scene_limit)
     return durations
+
+
+def _merge_scene_durations_to_limit(durations: list[float], scene_limit: int) -> list[float]:
+    merged = durations.copy()
+    max_scene = max_scene_duration_seconds()
+
+    while len(merged) > scene_limit:
+        merge_index = 0
+        smallest_pair_sum = merged[0] + merged[1]
+        for index in range(len(merged) - 1):
+            pair_sum = merged[index] + merged[index + 1]
+            if pair_sum <= max_scene * 1.5 and pair_sum < smallest_pair_sum:
+                merge_index = index
+                smallest_pair_sum = pair_sum
+        merged[merge_index] = round(merged[merge_index] + merged[merge_index + 1], 2)
+        del merged[merge_index + 1]
+
+    return merged
 
 
 def _dedupe_image_order(image_paths: list[Path], scene_count: int) -> list[Path]:

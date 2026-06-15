@@ -27,6 +27,7 @@ jobs:
   pipeline:
     needs: syntax-check
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
       models: read

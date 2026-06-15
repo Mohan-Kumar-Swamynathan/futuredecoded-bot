@@ -8,12 +8,22 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from futuredecoded.config.channel_profile import LONG_FORM_SPEC, SHORTS_SPEC, VIDEO_EXPORT_FPS
+from futuredecoded.config.channel_profile import LONG_FORM_SPEC, SHORTS_SPEC
 from futuredecoded.media.audio_utils import get_audio_duration
 from futuredecoded.media.font_resolver import escape_ffmpeg_path
 from futuredecoded.media.overlay_engine import build_overlay_drawtext_filter
 from futuredecoded.media.quality_checker import validate_video_output
 from futuredecoded.media.scene_planner import VideoScene, export_scene_manifest, plan_video_scenes
+from futuredecoded.media.video_export_settings import (
+    export_fps,
+    ffmpeg_crf,
+    ffmpeg_preset,
+    ffmpeg_thread_count,
+    finalize_render_timeout_seconds,
+    is_ci_build,
+    segment_render_timeout_seconds,
+    use_lightweight_motion,
+)
 from futuredecoded.media.watermark_engine import apply_watermark_to_video
 
 logger = logging.getLogger("futuredecoded.media.video")
@@ -102,6 +112,15 @@ def _build_video(
             images,
         )
         export_scene_manifest(scenes, output_path.parent / "scene_manifest.json")
+        logger.info(
+            "Rendering %d scenes for %s (%.1fs, ci=%s, fps=%d, lightweight=%s)",
+            len(scenes),
+            output_path.name,
+            duration,
+            is_ci_build(),
+            export_fps(),
+            use_lightweight_motion(),
+        )
         segment_clips = _render_scene_segments(scenes, width, height, temp_path)
         if not segment_clips:
             logger.error("Failed to render image segments")
@@ -160,6 +179,13 @@ def _render_scene_segments(
         if not image_path or not image_path.exists():
             continue
         clip_path = temp_dir / f"scene_{index:02d}.mp4"
+        logger.info(
+            "Rendering scene %d/%d (%.1fs, %s)",
+            index + 1,
+            len(scenes),
+            scene.duration_seconds,
+            scene.animation_type,
+        )
         if _render_single_segment(
             image_path=image_path,
             clip_path=clip_path,
@@ -221,18 +247,24 @@ def _render_segment_with_ffmpeg(
     width: int,
     height: int,
 ) -> bool:
-    frame_count = max(int(segment_duration * VIDEO_EXPORT_FPS), VIDEO_EXPORT_FPS * 3)
-    motion_filter = _build_motion_filter(animation_type, frame_count, width, height)
+    frame_count = max(int(segment_duration * export_fps()), export_fps() * 3)
+    motion_filter = None if use_lightweight_motion() else _build_motion_filter(
+        animation_type,
+        frame_count,
+        width,
+        height,
+    )
     fade_out_start = max(0.0, segment_duration - FADE_DURATION_SECONDS)
     filter_parts = [
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
         f"crop={width}:{height}",
-        motion_filter,
         "eq=contrast=1.10:saturation=1.18:brightness=0.02",
         "vignette=angle=PI/5",
         f"fade=t=in:st=0:d={FADE_DURATION_SECONDS}",
         f"fade=t=out:st={fade_out_start:.2f}:d={FADE_DURATION_SECONDS}",
     ]
+    if motion_filter:
+        filter_parts.insert(2, motion_filter)
 
     overlay_filter = build_overlay_drawtext_filter(
         overlay_text or "",
@@ -243,33 +275,35 @@ def _render_segment_with_ffmpeg(
     if overlay_filter:
         filter_parts.append(overlay_filter)
 
-    filter_parts.append(f"fps={VIDEO_EXPORT_FPS}")
+    filter_parts.append(f"fps={export_fps()}")
     video_filter = ",".join(filter_parts)
 
-    command = [
-        "ffmpeg",
-        "-y",
-        "-loop",
-        "1",
-        "-i",
-        str(image_path),
-        "-t",
-        f"{segment_duration:.2f}",
-        "-vf",
-        video_filter,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "22",
-        "-pix_fmt",
-        "yuv420p",
-        "-r",
-        str(VIDEO_EXPORT_FPS),
-        str(clip_path),
-    ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    command = _append_ffmpeg_thread_args(
+        [
+            "ffmpeg",
+            "-y",
+            "-loop",
+            "1",
+            "-i",
+            str(image_path),
+            "-t",
+            f"{segment_duration:.2f}",
+            "-vf",
+            video_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            ffmpeg_preset(),
+            "-crf",
+            ffmpeg_crf(),
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            str(export_fps()),
+            str(clip_path),
+        ]
+    )
+    result = subprocess.run(command, capture_output=True, text=True, timeout=segment_render_timeout_seconds())
     if result.returncode != 0:
         logger.warning("Segment render failed for %s: %s", image_path.name, result.stderr[-200:])
         return False
@@ -302,28 +336,30 @@ def _concatenate_video_segments(segment_clips: list[Path], output_path: Path) ->
         "\n".join(f"file '{clip}'" for clip in segment_clips),
         encoding="utf-8",
     )
-    command = [
-        "ffmpeg",
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        str(concat_list_path),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "22",
-        "-pix_fmt",
-        "yuv420p",
-        "-r",
-        str(VIDEO_EXPORT_FPS),
-        str(output_path),
-    ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+    command = _append_ffmpeg_thread_args(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_list_path),
+            "-c:v",
+            "libx264",
+            "-preset",
+            ffmpeg_preset(),
+            "-crf",
+            ffmpeg_crf(),
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            str(export_fps()),
+            str(output_path),
+        ]
+    )
+    result = subprocess.run(command, capture_output=True, text=True, timeout=finalize_render_timeout_seconds())
     if result.returncode != 0:
         logger.error("Concat failed: %s", result.stderr[-300:])
         return False
@@ -349,11 +385,18 @@ def _mux_audio(video_path: Path, audio_path: Path, output_path: Path, duration: 
         str(min(duration, 600)),
         str(output_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=finalize_render_timeout_seconds())
     if result.returncode != 0:
         logger.error("Audio mux failed: %s", result.stderr[-300:])
         return False
     return True
+
+
+def _append_ffmpeg_thread_args(command: list[str]) -> list[str]:
+    thread_count = ffmpeg_thread_count()
+    if thread_count <= 0:
+        return command
+    return command[:1] + ["-threads", str(thread_count)] + command[1:]
 
 
 def _finalize_video(
@@ -378,24 +421,26 @@ def _burn_captions(video_path: Path, caption_path: Path, output_path: Path) -> b
     )
     video_filter = f"subtitles='{escaped_path}':force_style='{subtitle_style}'"
 
-    command = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(video_path),
-        "-vf",
-        video_filter,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "22",
-        "-c:a",
-        "copy",
-        str(output_path),
-    ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+    command = _append_ffmpeg_thread_args(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            video_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            ffmpeg_preset(),
+            "-crf",
+            ffmpeg_crf(),
+            "-c:a",
+            "copy",
+            str(output_path),
+        ]
+    )
+    result = subprocess.run(command, capture_output=True, text=True, timeout=finalize_render_timeout_seconds())
     if result.returncode != 0:
         logger.warning("Caption burn failed: %s", result.stderr[-200:])
         return False

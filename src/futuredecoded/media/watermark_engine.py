@@ -15,6 +15,11 @@ from futuredecoded.config.channel_profile import (
 )
 from futuredecoded.config.settings import get_settings
 from futuredecoded.media.font_resolver import escape_ffmpeg_path
+from futuredecoded.media.video_export_settings import (
+    ffmpeg_crf,
+    ffmpeg_preset,
+    finalize_render_timeout_seconds,
+)
 
 logger = logging.getLogger("futuredecoded.media.watermark")
 
@@ -123,14 +128,14 @@ def apply_watermark_to_video(
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        ffmpeg_preset(),
         "-crf",
-        "22",
+        ffmpeg_crf(),
         "-c:a",
         "copy",
         str(output_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=600, check=False)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=finalize_render_timeout_seconds(), check=False)
     if result.returncode == 0:
         logger.info("Applied channel watermark: %s", output_path.name)
         return True
@@ -171,14 +176,14 @@ def _apply_watermark_only(
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        ffmpeg_preset(),
         "-crf",
-        "22",
+        ffmpeg_crf(),
         "-c:a",
         "copy",
         str(output_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=600, check=False)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=finalize_render_timeout_seconds(), check=False)
     if result.returncode != 0:
         logger.warning("Watermark-only overlay failed: %s", result.stderr[-250:])
         return False
