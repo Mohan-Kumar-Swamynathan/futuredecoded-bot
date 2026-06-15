@@ -61,6 +61,15 @@ def _extract_video_frame(video_path: Path, frame_path: Path, frame_time: float) 
     return result.returncode == 0 and frame_path.exists()
 
 
+def _resample_lanczos():
+    from PIL import Image
+
+    resampling = getattr(Image, "Resampling", None)
+    if resampling is not None:
+        return resampling.LANCZOS
+    return Image.LANCZOS
+
+
 def _load_base_image(
     hero_image: Path | None,
     video_path: Path,
@@ -69,11 +78,19 @@ def _load_base_image(
 ):
     from PIL import Image, ImageOps
 
+    resample = _resample_lanczos()
+
     if hero_image and hero_image.exists():
-        return ImageOps.fit(Image.open(hero_image).convert("RGB"), (1280, 720), method=ImageOps.LANCZOS)
+        try:
+            return ImageOps.fit(Image.open(hero_image).convert("RGB"), (1280, 720), method=resample)
+        except Exception as exc:
+            logger.warning("Hero image load failed, falling back: %s", exc)
 
     if _extract_video_frame(video_path, frame_path, frame_time):
-        return ImageOps.fit(Image.open(frame_path).convert("RGB"), (1280, 720), method=ImageOps.LANCZOS)
+        try:
+            return ImageOps.fit(Image.open(frame_path).convert("RGB"), (1280, 720), method=resample)
+        except Exception as exc:
+            logger.warning("Video frame load failed, falling back: %s", exc)
 
     return Image.new("RGB", (1280, 720), (15, 25, 45))
 
