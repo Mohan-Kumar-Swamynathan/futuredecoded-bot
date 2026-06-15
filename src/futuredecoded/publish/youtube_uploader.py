@@ -13,6 +13,7 @@ from typing import Optional
 from futuredecoded.config.channel_profile import DEFAULT_LANGUAGE, YOUTUBE_CATEGORY_ID
 from futuredecoded.config.settings import get_settings
 from futuredecoded.database.models import UploadHistoryRecord, get_session
+from futuredecoded.publish.schedule_planner import format_publish_at_for_youtube
 
 logger = logging.getLogger("futuredecoded.publish.youtube")
 
@@ -108,13 +109,15 @@ def upload_video(
     description: str,
     tags: list[str],
     thumbnail_path: Path | None = None,
-    privacy: str = "public",
+    privacy: str = "private",
     format_type: str = "long",
     script: str = "",
+    publish_at_utc: datetime | None = None,
 ) -> str | None:
     settings = get_settings()
     if settings.dry_run:
-        logger.info("[DRY RUN] Would upload: %s", title)
+        publish_label = format_publish_at_for_youtube(publish_at_utc) if publish_at_utc else "immediate"
+        logger.info("[DRY RUN] Would upload: %s (publish=%s)", title, publish_label)
         return "DRY_RUN_VIDEO_ID"
 
     if is_duplicate(title, script):
@@ -127,6 +130,14 @@ def upload_video(
 
     from googleapiclient.http import MediaFileUpload
 
+    status_body: dict = {
+        "privacyStatus": privacy,
+        "selfDeclaredMadeForKids": False,
+    }
+    if publish_at_utc is not None:
+        status_body["publishAt"] = format_publish_at_for_youtube(publish_at_utc)
+        status_body["privacyStatus"] = "private"
+
     body = {
         "snippet": {
             "title": title[:100],
@@ -135,10 +146,7 @@ def upload_video(
             "categoryId": YOUTUBE_CATEGORY_ID,
             "defaultLanguage": DEFAULT_LANGUAGE,
         },
-        "status": {
-            "privacyStatus": privacy,
-            "selfDeclaredMadeForKids": False,
-        },
+        "status": status_body,
     }
 
     media = MediaFileUpload(str(video_path), chunksize=1024 * 1024, resumable=True)
@@ -150,7 +158,14 @@ def upload_video(
             logger.info("Upload progress: %d%%", int(status.progress() * 100))
 
     video_id = response["id"]
-    logger.info("Uploaded: https://youtu.be/%s", video_id)
+    if publish_at_utc is not None:
+        logger.info(
+            "Uploaded and scheduled: https://youtu.be/%s at %s",
+            video_id,
+            format_publish_at_for_youtube(publish_at_utc),
+        )
+    else:
+        logger.info("Uploaded: https://youtu.be/%s", video_id)
 
     if thumbnail_path and thumbnail_path.exists():
         try:

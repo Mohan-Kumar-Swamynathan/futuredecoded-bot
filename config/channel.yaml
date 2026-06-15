@@ -28,5 +28,6 @@ video:
     max_duration_s: 60
 
 upload:
-  privacy: public
-  schedule_offset_hours: 2
+  privacy: private
+  long_form_publish_ist: "08:00"
+  shorts_publish_ist: "18:30"

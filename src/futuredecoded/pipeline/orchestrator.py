@@ -6,6 +6,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from futuredecoded.analytics.analytics_engine import generate_weekly_report, store_analytics_snapshot
 from futuredecoded.analytics.learning_engine import analyse_and_update_preferences
@@ -18,8 +19,12 @@ from futuredecoded.editorial.fact_checker import verify_story
 from futuredecoded.editorial.script_generator import generate_scripts
 from futuredecoded.media.thumbnail_engine import generate_thumbnail
 from futuredecoded.media.video_engine import build_long_video, build_short_video
-from futuredecoded.media.visual_collector import collect_visuals
+from futuredecoded.media.visual_collector import collect_visuals_for_story
 from futuredecoded.media.voice_engine import synthesise_voice
+from futuredecoded.publish.schedule_planner import (
+    resolve_long_form_publish_time_utc,
+    resolve_shorts_publish_time_utc,
+)
 from futuredecoded.publish.social_publisher import publish_social_posts
 from futuredecoded.publish.youtube_uploader import upload_video
 from futuredecoded.seo.chapter_builder import build_chapters_from_sections
@@ -27,6 +32,7 @@ from futuredecoded.seo.description_formatter import build_long_form_description,
 from futuredecoded.seo.seo_engine import enrich_seo
 
 logger = logging.getLogger("futuredecoded.pipeline")
+IST = ZoneInfo("Asia/Kolkata")
 
 
 @dataclass
@@ -39,9 +45,19 @@ class PipelineResult:
     error: str = ""
 
 
-def _build_visual_keywords(story_title: str) -> list[str]:
-    title_words = [word for word in story_title.split() if len(word) > 3][:4]
-    return title_words + ["artificial intelligence", "technology", "business news", "AI regulation"]
+def _order_images_for_sections(
+    images: list[Path],
+    sections: list[dict[str, str]],
+) -> list[Path]:
+    if not images or not sections:
+        return images
+    ordered: list[Path] = []
+    for index in range(len(sections)):
+        ordered.append(images[index % len(images)])
+    for image in images:
+        if image not in ordered:
+            ordered.append(image)
+    return ordered
 
 
 def _save_description(output_dir: Path, filename: str, description: str) -> None:
@@ -79,9 +95,36 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
     sources = [source.get("url", story.url) for source in fact_result.sources]
     seo = enrich_seo(story.title, scripts.script_long, scripts.script_short, sources, output_dir)
 
-    keywords = _build_visual_keywords(story.title)
-    visuals = collect_visuals(topic_slug, keywords)
-    hero_image = visuals[0] if visuals else None
+    visuals_long = collect_visuals_for_story(
+        topic_slug=topic_slug,
+        story_title=story.title,
+        outline=scripts.outline,
+        sections=scripts.script_sections,
+        max_images=8,
+        orientation="landscape",
+    )
+    visuals_short = collect_visuals_for_story(
+        topic_slug=topic_slug,
+        story_title=story.title,
+        outline=scripts.outline,
+        sections=scripts.script_short_sections,
+        max_images=4,
+        orientation="portrait",
+    )
+    visuals_long = _order_images_for_sections(visuals_long, scripts.script_sections)
+    visuals_short = _order_images_for_sections(visuals_short, scripts.script_short_sections)
+    hero_image = visuals_long[0] if visuals_long else None
+
+    long_publish_at = resolve_long_form_publish_time_utc()
+    short_publish_at = resolve_shorts_publish_time_utc()
+    logger.info(
+        "Long-form YouTube publish scheduled for %s",
+        long_publish_at.astimezone(IST).strftime("%I:%M %p IST").lstrip("0"),
+    )
+    logger.info(
+        "Shorts YouTube publish scheduled for %s",
+        short_publish_at.astimezone(IST).strftime("%I:%M %p IST").lstrip("0"),
+    )
 
     long_video_id = None
     short_video_id = None
@@ -104,7 +147,7 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         _save_description(output_dir, "description_long.txt", long_description)
         srt_long = voice_long.with_suffix(".srt")
         video_long = build_long_video(
-            scripts.script_long, voice_long, visuals,
+            scripts.script_long, voice_long, visuals_long,
             output_dir / "video_long.mp4", srt_long,
         )
         thumb_long = generate_thumbnail(
@@ -122,6 +165,7 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
                 thumbnail_path=thumb_long,
                 format_type="long",
                 script=scripts.script_long,
+                publish_at_utc=long_publish_at,
             )
             if long_video_id:
                 store_analytics_snapshot(long_video_id, {"views": 0, "ctr": 0.0, "retention": 0.0})
@@ -144,14 +188,14 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
         _save_description(output_dir, "description_short.txt", shorts_description)
         srt_short = voice_short.with_suffix(".srt")
         video_short = build_short_video(
-            scripts.script_short, voice_short, visuals,
+            scripts.script_short, voice_short, visuals_short,
             output_dir / "video_short.mp4", srt_short,
         )
         thumb_short = generate_thumbnail(
             video_short or output_dir / "video_short.mp4",
             seo.shorts.get("title", story.title)[:15],
             output_dir / "thumbnail_short.png",
-            hero_image=hero_image,
+            hero_image=visuals_short[0] if visuals_short else hero_image,
         )
         if upload and video_short:
             short_video_id = upload_video(
@@ -162,6 +206,7 @@ def run_daily_pipeline(upload: bool = True) -> PipelineResult:
                 thumbnail_path=thumb_short,
                 format_type="short",
                 script=scripts.script_short,
+                publish_at_utc=short_publish_at,
             )
 
     video_url = f"https://youtu.be/{long_video_id or short_video_id or 'pending'}"
