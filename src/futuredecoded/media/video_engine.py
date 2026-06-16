@@ -6,6 +6,7 @@ import logging
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from futuredecoded.config.channel_profile import LONG_FORM_SPEC, SHORTS_SPEC
@@ -21,7 +22,12 @@ from futuredecoded.media.video_export_settings import (
     ffmpeg_thread_count,
     finalize_render_timeout_seconds,
     is_ci_build,
+    parallel_segment_workers,
     segment_render_timeout_seconds,
+    skip_finalize_reencode,
+    skip_segment_enhancements,
+    skip_text_overlays,
+    use_concat_stream_copy,
     use_lightweight_motion,
 )
 from futuredecoded.media.watermark_engine import apply_watermark_to_video
@@ -113,13 +119,15 @@ def _build_video(
         )
         export_scene_manifest(scenes, output_path.parent / "scene_manifest.json")
         logger.info(
-            "Rendering %d scenes for %s (%.1fs, ci=%s, fps=%d, lightweight=%s)",
+            "Rendering %d scenes for %s (%.1fs, ci=%s, fps=%d, lightweight=%s, workers=%d, fast_finalize=%s)",
             len(scenes),
             output_path.name,
             duration,
             is_ci_build(),
             export_fps(),
             use_lightweight_motion(),
+            parallel_segment_workers(),
+            skip_finalize_reencode(),
         )
         segment_clips = _render_scene_segments(scenes, width, height, temp_path)
         if not segment_clips:
@@ -135,7 +143,13 @@ def _build_video(
             logger.error("Failed to mux audio")
             return None
 
-        if _finalize_video(with_audio, output_path, resolved_caption_path, width, height):
+        if skip_finalize_reencode():
+            shutil.copy(with_audio, output_path)
+            logger.info(
+                "CI fast path: skipped caption/watermark re-encode for %s (YouTube auto-captions from audio)",
+                output_path.name,
+            )
+        elif _finalize_video(with_audio, output_path, resolved_caption_path, width, height):
             logger.info("Video finalized with watermark/captions: %s", output_path.name)
         else:
             shutil.copy(with_audio, output_path)
@@ -173,31 +187,83 @@ def _render_scene_segments(
     height: int,
     temp_dir: Path,
 ) -> list[Path]:
+    worker_count = parallel_segment_workers()
+    if worker_count <= 1 or len(scenes) <= 1:
+        return _render_scene_segments_sequential(scenes, width, height, temp_dir)
+    return _render_scene_segments_parallel(scenes, width, height, temp_dir, worker_count)
+
+
+def _render_scene_segments_sequential(
+    scenes: list[VideoScene],
+    width: int,
+    height: int,
+    temp_dir: Path,
+) -> list[Path]:
     clip_paths: list[Path] = []
     for index, scene in enumerate(scenes):
-        image_path = scene.image_path
-        if not image_path or not image_path.exists():
-            continue
-        clip_path = temp_dir / f"scene_{index:02d}.mp4"
-        logger.info(
-            "Rendering scene %d/%d (%.1fs, %s)",
-            index + 1,
-            len(scenes),
-            scene.duration_seconds,
-            scene.animation_type,
-        )
-        if _render_single_segment(
-            image_path=image_path,
-            clip_path=clip_path,
-            segment_duration=scene.duration_seconds,
-            animation_type=scene.animation_type,
-            overlay_text=scene.text_overlay,
-            is_hook_scene=scene.is_hook_scene,
-            width=width,
-            height=height,
-        ):
+        clip_path = _render_scene_clip(scene, index, len(scenes), width, height, temp_dir)
+        if clip_path is not None:
             clip_paths.append(clip_path)
     return clip_paths
+
+
+def _render_scene_segments_parallel(
+    scenes: list[VideoScene],
+    width: int,
+    height: int,
+    temp_dir: Path,
+    worker_count: int,
+) -> list[Path]:
+    rendered_clips: dict[int, Path] = {}
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(_render_scene_clip, scene, index, len(scenes), width, height, temp_dir): index
+            for index, scene in enumerate(scenes)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            clip_path = future.result()
+            if clip_path is not None:
+                rendered_clips[index] = clip_path
+
+    return [rendered_clips[index] for index in sorted(rendered_clips)]
+
+
+def _render_scene_clip(
+    scene: VideoScene,
+    index: int,
+    scene_count: int,
+    width: int,
+    height: int,
+    temp_dir: Path,
+) -> Path | None:
+    image_path = scene.image_path
+    if not image_path or not image_path.exists():
+        return None
+
+    clip_path = temp_dir / f"scene_{index:02d}.mp4"
+    logger.info(
+        "Rendering scene %d/%d (%.1fs, %s)",
+        index + 1,
+        scene_count,
+        scene.duration_seconds,
+        scene.animation_type,
+    )
+    overlay_text = None if skip_text_overlays() else scene.text_overlay
+    is_hook_scene = False if skip_text_overlays() else scene.is_hook_scene
+    if _render_single_segment(
+        image_path=image_path,
+        clip_path=clip_path,
+        segment_duration=scene.duration_seconds,
+        animation_type=scene.animation_type,
+        overlay_text=overlay_text,
+        is_hook_scene=is_hook_scene,
+        width=width,
+        height=height,
+    ):
+        return clip_path
+    return None
 
 
 def _render_single_segment(
@@ -258,11 +324,14 @@ def _render_segment_with_ffmpeg(
     filter_parts = [
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
         f"crop={width}:{height}",
-        "eq=contrast=1.10:saturation=1.18:brightness=0.02",
-        "vignette=angle=PI/5",
-        f"fade=t=in:st=0:d={FADE_DURATION_SECONDS}",
-        f"fade=t=out:st={fade_out_start:.2f}:d={FADE_DURATION_SECONDS}",
     ]
+    if not skip_segment_enhancements():
+        filter_parts.extend([
+            "eq=contrast=1.10:saturation=1.18:brightness=0.02",
+            "vignette=angle=PI/5",
+            f"fade=t=in:st=0:d={FADE_DURATION_SECONDS}",
+            f"fade=t=out:st={fade_out_start:.2f}:d={FADE_DURATION_SECONDS}",
+        ])
     if motion_filter:
         filter_parts.insert(2, motion_filter)
 
@@ -296,6 +365,8 @@ def _render_segment_with_ffmpeg(
             ffmpeg_preset(),
             "-crf",
             ffmpeg_crf(),
+            "-tune",
+            "stillimage",
             "-pix_fmt",
             "yuv420p",
             "-r",
@@ -336,29 +407,47 @@ def _concatenate_video_segments(segment_clips: list[Path], output_path: Path) ->
         "\n".join(f"file '{clip}'" for clip in segment_clips),
         encoding="utf-8",
     )
-    command = _append_ffmpeg_thread_args(
-        [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(concat_list_path),
-            "-c:v",
-            "libx264",
-            "-preset",
-            ffmpeg_preset(),
-            "-crf",
-            ffmpeg_crf(),
-            "-pix_fmt",
-            "yuv420p",
-            "-r",
-            str(export_fps()),
-            str(output_path),
-        ]
-    )
+    if use_concat_stream_copy():
+        logger.info("Concatenating %d scene clips with stream copy", len(segment_clips))
+        command = _append_ffmpeg_thread_args(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list_path),
+                "-c",
+                "copy",
+                str(output_path),
+            ]
+        )
+    else:
+        command = _append_ffmpeg_thread_args(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list_path),
+                "-c:v",
+                "libx264",
+                "-preset",
+                ffmpeg_preset(),
+                "-crf",
+                ffmpeg_crf(),
+                "-pix_fmt",
+                "yuv420p",
+                "-r",
+                str(export_fps()),
+                str(output_path),
+            ]
+        )
     result = subprocess.run(command, capture_output=True, text=True, timeout=finalize_render_timeout_seconds())
     if result.returncode != 0:
         logger.error("Concat failed: %s", result.stderr[-300:])

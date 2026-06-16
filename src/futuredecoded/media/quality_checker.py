@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from futuredecoded.media.scene_planner import MAX_SCENE_DURATION_SECONDS
-from futuredecoded.media.video_export_settings import run_black_frame_detection
+from futuredecoded.media.video_export_settings import require_burned_captions, run_black_frame_detection
 
 logger = logging.getLogger("futuredecoded.media.quality")
 
@@ -29,7 +29,7 @@ def validate_video_output(
     if not video_path.exists() or video_path.stat().st_size == 0:
         issues.append("Video file missing or empty")
 
-    if caption_path is not None and not caption_path.exists():
+    if require_burned_captions() and caption_path is not None and not caption_path.exists():
         issues.append("Captions missing")
 
     for index, duration in enumerate(scene_durations):
