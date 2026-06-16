@@ -127,8 +127,20 @@ def score_story(
     raw_score: int = 0,
     news_volume: float | None = None,
     social_mentions: float | None = None,
+    published_at: float | None = None,
 ) -> ScoredStory:
+    import time as _time
     engagement_signal = float(raw_score) if raw_score > 0 else 40.0
+    # Recency boost: stories < 6h old get +8, < 24h +4, older get -5
+    recency_boost = 0.0
+    if published_at is not None:
+        age_hours = (_time.time() - published_at) / 3600
+        if age_hours < 6:
+            recency_boost = 8.0
+        elif age_hours < 24:
+            recency_boost = 4.0
+        elif age_hours > 72:
+            recency_boost = -5.0
     search_growth = _normalize_score(engagement_signal, 250.0)
     news_vol = news_volume if news_volume is not None else _normalize_score(engagement_signal, 200.0)
     social = social_mentions if social_mentions is not None else _normalize_score(engagement_signal, 150.0)
@@ -145,6 +157,7 @@ def score_story(
         + 0.25 * curiosity_score
         + 0.25 * search_potential_score
         + 0.20 * monetization_score
+        + recency_boost
     )
 
     title_lower = title.lower()
