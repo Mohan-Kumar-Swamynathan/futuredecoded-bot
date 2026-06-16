@@ -28,7 +28,7 @@ def ffmpeg_thread_count() -> int:
 def max_scene_duration_seconds() -> float:
     # CI: 30s max — enough for a proper Ken Burns motion without timeout
     # Local: 25s — good balance for long-form
-    return 30.0 if is_ci_build() else 25.0
+    return 30.0 if is_ci_build() else 5.0
 
 
 def min_scene_duration_seconds() -> float:
@@ -43,7 +43,7 @@ def default_scene_duration_seconds() -> float:
 
 def hook_scene_duration_seconds() -> float:
     # Hook is first 15s — keep it snappy
-    return 5.0 if is_ci_build() else 4.0
+    return 5.0 if is_ci_build() else 3.0
 
 
 def hook_window_seconds() -> float:
