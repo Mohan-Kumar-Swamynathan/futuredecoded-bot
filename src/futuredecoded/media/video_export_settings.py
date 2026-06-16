@@ -84,7 +84,7 @@ def require_burned_captions() -> bool:
 
 def max_scene_count() -> int | None:
     # CI: cap at 15 scenes — enough for 4-6 min video at 20s/scene
-    return 15 if is_ci_build() else None
+    return 12 if is_ci_build() else None
 
 
 def parallel_segment_workers() -> int:
