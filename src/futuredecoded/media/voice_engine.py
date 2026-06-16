@@ -12,6 +12,7 @@ import edge_tts
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from futuredecoded.config.channel_profile import EDGE_TTS_PITCH, EDGE_TTS_RATE, EDGE_TTS_VOICE
+from futuredecoded.llm.provider_client import get_llm_client
 from futuredecoded.config.settings import get_settings
 from futuredecoded.media.audio_mixer import mix_narration_with_bgm
 from futuredecoded.media.audio_utils import get_audio_duration
@@ -40,6 +41,49 @@ def sanitize_script_for_tts(script_text: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned.strip()
+
+
+SSML_REWRITE_PROMPT = """You are a world-class speech writer, linguist, and prosody engineer specializing in Microsoft Azure Neural Text-to-Speech.
+Your task is to transform the provided text into highly natural, human-like speech optimized for Microsoft Edge TTS.
+
+Primary Goal: Make the audio sound as close as possible to a real human speaker in English.
+
+Requirements:
+- Preserve meaning exactly; do not add or remove information.
+- Rewrite written text into natural spoken language.
+- Improve conversational flow and rhythm.
+- Break long sentences into shorter, natural speech units.
+- Add realistic pauses where humans naturally pause.
+- Use punctuation strategically to improve prosody and intonation.
+- Avoid robotic, repetitive, overly formal, or book-like phrasing.
+- Make the speech sound warm, engaging, confident, and natural.
+- Optimize for listeners rather than readers.
+- Make narration sound like a professional tech presenter or podcast host.
+
+Rules:
+- Return ONLY the rewritten plain text. No SSML tags, no XML, no markdown.
+- Do not add or remove information.
+- Natural contractions are fine: "it is" → "it's", "we are" → "we're"
+- Short punchy sentences for key facts. Longer flowing sentences for context.
+- Numbers should be spoken naturally: "1000000" → "one million", "3.5x" → "three and a half times faster"
+
+Input Text:
+{text}"""
+
+
+def rewrite_for_naturalness(script_text: str) -> str:
+    """Use LLM to rewrite script into natural spoken form before TTS."""
+    try:
+        llm = get_llm_client()
+        prompt = SSML_REWRITE_PROMPT.format(text=script_text[:4000])
+        rewritten = llm.call(prompt, max_tokens=5000)
+        if rewritten and len(rewritten.strip()) > 100:
+            logger.info("Script rewritten for naturalness: %d → %d chars",
+                       len(script_text), len(rewritten))
+            return rewritten.strip()
+    except Exception as e:
+        logger.warning("LLM rewrite failed (%s) — using original script", e)
+    return script_text
 
 
 def _generate_srt(script_text: str, duration: float, words_per_segment: int = 8) -> str:
@@ -240,16 +284,20 @@ def synthesise_voice(
     if not cleaned_script:
         raise RuntimeError("Script text is empty after sanitization — cannot synthesise voice")
 
+    # Rewrite for natural spoken cadence before TTS
+    natural_script = rewrite_for_naturalness(cleaned_script)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info(
-        "Synthesising voice (%d chars, format=%s) -> %s",
+        "Synthesising voice (%d chars → %d chars natural, format=%s) -> %s",
         len(cleaned_script),
+        len(natural_script),
         format_type,
         output_path.name,
     )
 
     narration_path = output_path.with_name(f"{output_path.stem}_narration{output_path.suffix}")
-    word_timings = _synthesise_narration_track(cleaned_script, narration_path)
+    word_timings = _synthesise_narration_track(natural_script, narration_path)
 
     narration_srt = narration_path.with_suffix(".srt")
     output_srt = output_path.with_suffix(".srt")
