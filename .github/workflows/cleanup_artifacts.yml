@@ -1,62 +1,56 @@
-name: Cleanup Action Artifacts
+name: Cleanup Old Artifacts
 
 on:
+  schedule:
+    - cron: "0 2 * * *"   # 07:30 IST daily — runs before morning video generation
   workflow_dispatch:
-    inputs:
-      keep_latest:
-        description: "Number of newest artifacts to keep (0 = delete all)"
-        required: false
-        default: "0"
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       actions: write
+
     steps:
-      - name: Delete old workflow artifacts
+      - name: Delete artifacts older than 48 hours
         uses: actions/github-script@v7
         with:
           script: |
-            const keepLatest = Number('${{ inputs.keep_latest }}') || 0;
             const owner = context.repo.owner;
-            const repo = context.repo.repo;
+            const repo  = context.repo.repo;
+            const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
             let page = 1;
-            const allArtifacts = [];
+            let deleted = 0;
+            let skipped = 0;
 
             while (true) {
-              const response = await github.rest.actions.listArtifactsForRepo({
-                owner,
-                repo,
-                per_page: 100,
-                page,
+              const { data } = await github.rest.actions.listArtifactsForRepo({
+                owner, repo, per_page: 100, page
               });
-              allArtifacts.push(...response.data.artifacts);
-              if (response.data.artifacts.length < 100) {
-                break;
+
+              if (data.artifacts.length === 0) break;
+
+              for (const artifact of data.artifacts) {
+                const created = new Date(artifact.created_at);
+                if (created < cutoff) {
+                  try {
+                    await github.rest.actions.deleteArtifact({
+                      owner, repo, artifact_id: artifact.id
+                    });
+                    console.log(`🗑️  Deleted: ${artifact.name} (${(artifact.size_in_bytes/1024/1024).toFixed(1)}MB, created ${artifact.created_at})`);
+                    deleted++;
+                  } catch (err) {
+                    console.log(`⚠️  Could not delete ${artifact.name}: ${err.message}`);
+                  }
+                } else {
+                  skipped++;
+                }
               }
-              page += 1;
+
+              if (data.artifacts.length < 100) break;
+              page++;
             }
 
-            allArtifacts.sort((left, right) => new Date(right.created_at) - new Date(left.created_at));
-            const artifactsToDelete = keepLatest > 0 ? allArtifacts.slice(keepLatest) : allArtifacts;
-
-            if (artifactsToDelete.length === 0) {
-              core.info('No artifacts to delete.');
-              return;
-            }
-
-            let deletedCount = 0;
-            let freedBytes = 0;
-            for (const artifact of artifactsToDelete) {
-              await github.rest.actions.deleteArtifact({
-                owner,
-                repo,
-                artifact_id: artifact.id,
-              });
-              deletedCount += 1;
-              freedBytes += artifact.size_in_bytes || 0;
-              core.info(`Deleted ${artifact.name} (${artifact.id}, ${artifact.size_in_bytes} bytes)`);
-            }
-
-            core.info(`Deleted ${deletedCount} artifact(s), freed ~${(freedBytes / 1024 / 1024).toFixed(1)} MB.`);
+            console.log(`\n✅ Done — deleted ${deleted} artifact(s), kept ${skipped}`);
