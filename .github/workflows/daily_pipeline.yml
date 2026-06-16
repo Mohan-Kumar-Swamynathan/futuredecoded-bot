@@ -97,11 +97,17 @@ jobs:
             python -m futuredecoded.main --daily --dry-run
           fi
 
-      - name: Upload artifacts
-        if: always()
+      - name: Upload debug artifacts on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: pipeline-outputs
-          path: outputs/
-          retention-days: 7
+          name: pipeline-debug-${{ github.run_id }}
+          path: |
+            outputs/**/*.json
+            outputs/**/*.txt
+            outputs/**/*.ass
+            outputs/**/description_*.txt
+            outputs/**/scene_manifest.json
+          retention-days: 1
           if-no-files-found: ignore
+          compression-level: 9
