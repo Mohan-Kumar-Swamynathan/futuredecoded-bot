@@ -32,7 +32,7 @@ def max_scene_duration_seconds() -> float:
 
 
 def min_scene_duration_seconds() -> float:
-    return 8.0 if is_ci_build() else 5.0
+    return 8.0 if is_ci_build() else 2.0
 
 
 def default_scene_duration_seconds() -> float:
