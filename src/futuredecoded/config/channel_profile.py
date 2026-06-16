@@ -71,9 +71,9 @@ class VideoSpec:
 LONG_FORM_SPEC = VideoSpec(1920, 1080, 240, 360)
 SHORTS_SPEC = VideoSpec(1080, 1920, 30, 60)
 
-EDGE_TTS_VOICE = "en-US-GuyNeural"
-EDGE_TTS_RATE = "-5%"
-EDGE_TTS_PITCH = "+0Hz"
+EDGE_TTS_VOICE = "en-US-AndrewMultilingualNeural"  # Upgraded: warmer, more natural presenter voice
+EDGE_TTS_RATE = "-10%"  # Slower = more natural cadence (was -5% which sounds rushed)
+EDGE_TTS_PITCH = "+1Hz"  # Tiny lift removes flat robotic quality
 
 GEMINI_TTS_MODELS = (
     "gemini-2.5-flash-preview-tts",
