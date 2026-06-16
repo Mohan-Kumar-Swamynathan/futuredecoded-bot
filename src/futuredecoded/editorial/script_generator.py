@@ -74,7 +74,8 @@ def generate_scripts(
 def _build_research_context(research: ResearchBundle | None) -> str:
     if not research:
         return "Use the primary source and add original analysis."
-    return "\n".join(f"- {point}" for point in research.summary_points[:6])
+    points = research.summary_points[:8]
+    return "\n".join(f"- {point}" for point in points)
 
 
 def _build_generation_prompt(
@@ -96,9 +97,20 @@ def _build_generation_prompt(
 Story: {title}
 Source: {url}
 
-Research context:
+Research context (use these facts, add your own analysis):
 {research_context}
 {strictness}
+
+CHANNEL VOICE — this is critical:
+FutureDecoded speaks like a sharp, opinionated tech analyst — not a news anchor reading a teleprompter.
+Think: the smartest engineer at the company who also happens to explain things really well.
+- Direct, confident opinions ("This is a big deal because...", "Here's what most people are missing...")
+- Concrete comparisons and numbers — never vague ("3x faster than GPT-4", "saves 40 hours per week")
+- Conversational but authoritative — short punchy sentences followed by one longer explanation
+- Speak TO the viewer, not AT them — "you", "your workflow", "if you're building with this"
+
+AUDIENCE: Developers, AI engineers, startup founders, tech enthusiasts — people who BUILD things.
+They want: what changed, why it matters for their work, what they should do about it.
 
 Return JSON:
 {{
@@ -109,35 +121,31 @@ Return JSON:
     "sources": ["{url}"]
   }},
   "script_sections": [
-    {{"label": "Hook", "text": "15-second spoken hook (~30 words)"}},
-    {{"label": "Problem", "text": "context paragraph (~90 words)"}},
-    {{"label": "What Happened", "text": "news summary (~100 words)"}},
-    {{"label": "Why It Matters", "text": "analysis (~100 words)"}},
-    {{"label": "Industry Impact", "text": "impact (~100 words)"}},
-    {{"label": "Future Outlook", "text": "outlook (~100 words)"}},
-    {{"label": "Call To Action", "text": "CTA (~40 words)"}}
+    {{"label": "Hook", "text": "15-second spoken hook. Start with the most surprising fact or a counterintuitive statement. NEVER start with 'Today', 'In this video', 'Welcome'. Open on the idea itself. (~35 words)"}},
+    {{"label": "Context", "text": "Why this matters RIGHT NOW. What problem does this solve or what shift does it signal? (~90 words)"}},
+    {{"label": "What Happened", "text": "The actual news — concrete facts, numbers, dates, who did what. (~100 words)"}},
+    {{"label": "Technical Depth", "text": "How it actually works — one specific technical insight that a developer would appreciate. Avoid hand-waving. (~100 words)"}},
+    {{"label": "Industry Impact", "text": "Who wins, who loses, what changes in the next 6-12 months. Specific companies or workflows named. (~100 words)"}},
+    {{"label": "Your Take", "text": "A direct opinion: is this overhyped, underrated, or exactly what it claims? Why? (~80 words)"}},
+    {{"label": "Call To Action", "text": "End with a comment-driving question — two concrete options, not open-ended. (~30 words)"}}
   ],
   "script_short_sections": [
-    {{"label": "Hook", "text": "3-second hook"}},
-    {{"label": "Key Fact", "text": "single key fact"}},
-    {{"label": "Why It Matters", "text": "one sentence impact"}},
-    {{"label": "Takeaway", "text": "CTA"}}
+    {{"label": "Hook", "text": "First 3 seconds — one shocking number or counterintuitive fact. No greeting."}},
+    {{"label": "The News", "text": "What happened in one sentence."}},
+    {{"label": "Why It Matters", "text": "One sentence — what changes for developers or builders."}},
+    {{"label": "CTA", "text": "Subscribe + one question."}}
   ],
-  "script_short": "30-60 second Shorts narration. 80-120 words total.",
-  "script_long": "Full 4-6 minute narration. MUST be 600-900 words. Combine all sections."
+  "script_short": "45-60 second Shorts narration. 90-120 words. Fast, punchy, one key insight, ends with question.",
+  "script_long": "Full 4-6 minute narration. MUST be 600-900 words. Combine all sections into flowing speech — no section headers."
 }}
 
-Channel: FutureDecoded — Making Sense of Tomorrow
-Audience: developers, tech enthusiasts, startup founders, AI enthusiasts
-
-Rules:
+HARD RULES:
 - script_long word count is mandatory: 600-900 words
-- Original commentary and analysis — do NOT rewrite a press release
-- Explain why the news matters with concrete examples
-- Conversational, not robotic
-- No repeated phrases
-- No generic filler like "in today's video" or "without further ado"
-- Short sentences for retention
+- No repeated phrases or padding
+- No generic openers: 'In today's video', 'without further ado', 'that's right folks'
+- Every claim needs a concrete number or named example — no vague 'significant improvement'
+- The 'Your Take' section must have a clear opinion, not a fence-sit
+- Last sentence of script_long must be a two-choice question that forces a comment
 """
 
 
@@ -163,11 +171,11 @@ Return JSON:
 {{
   "script_sections": [
     {{"label": "Hook", "text": "..."}},
-    {{"label": "Problem", "text": "..."}},
+    {{"label": "Context", "text": "..."}},
     {{"label": "What Happened", "text": "..."}},
-    {{"label": "Why It Matters", "text": "..."}},
+    {{"label": "Technical Depth", "text": "..."}},
     {{"label": "Industry Impact", "text": "..."}},
-    {{"label": "Future Outlook", "text": "..."}},
+    {{"label": "Your Take", "text": "..."}},
     {{"label": "Call To Action", "text": "..."}}
   ],
   "script_long": "Expanded narration. MUST be 600-900 words total."
@@ -175,8 +183,10 @@ Return JSON:
 
 Rules:
 - Keep facts accurate — do not invent quotes or numbers
-- Add depth: industry context, comparisons, implications for developers and startups
+- Add depth: technical insight, developer implications, who wins/loses
+- Direct opinions allowed and encouraged in 'Your Take'
 - Minimum {MIN_LONG_SCRIPT_WORDS} words in script_long
+- End with a two-choice comment question
 """
     result = llm.call_json(prompt)
     expanded_sections = result.get("script_sections", scripts.script_sections)
