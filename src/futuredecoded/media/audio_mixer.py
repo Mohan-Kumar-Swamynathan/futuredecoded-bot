@@ -33,9 +33,19 @@ def mix_narration_with_bgm(
     music_volume = BGM_MUSIC_VOLUME_LONG if format_type == "long" else BGM_MUSIC_VOLUME_SHORT
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Sidechain compress BGM under voice — much more natural than plain mix
+    # Voice EQ: natural warmth, room presence, light compression
     filter_graph = (
+        f"[0:a]highpass=f=85,"
+        f"equalizer=f=180:t=q:w=0.9:g=1.5,"
+        f"equalizer=f=1000:t=q:w=0.8:g=1.5,"
+        f"equalizer=f=7000:t=q:w=1:g=-1.5,"
+        f"aecho=0.72:0.58:22|40:0.06|0.03,"
+        f"acompressor=threshold=-20dB:ratio=1.6:attack=10:release=300:makeup=1.5,"
+        f"loudnorm=I=-14:TP=-1.5:LRA=12,asplit=2[voice][sc];"
         f"[1:a]volume={music_volume},aloop=loop=-1:size=2e+09[bgm];"
-        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2,volume=1.0[aout]"
+        f"[bgm][sc]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=500[bgm_ducked];"
+        f"[voice][bgm_ducked]amix=inputs=2:duration=first:dropout_transition=2[aout]"
     )
     command = [
         "ffmpeg",
