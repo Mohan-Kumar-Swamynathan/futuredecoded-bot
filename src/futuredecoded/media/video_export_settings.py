@@ -14,11 +14,11 @@ def export_fps() -> int:
 
 
 def ffmpeg_preset() -> str:
-    return "ultrafast" if is_ci_build() else "veryfast"
+    return "veryfast" if is_ci_build() else "veryfast"
 
 
 def ffmpeg_crf() -> str:
-    return "28" if is_ci_build() else "22"
+    return "23" if is_ci_build() else "21"
 
 
 def ffmpeg_thread_count() -> int:
@@ -26,19 +26,24 @@ def ffmpeg_thread_count() -> int:
 
 
 def max_scene_duration_seconds() -> float:
-    return 12.0 if is_ci_build() else 5.0
+    # CI: 30s max — enough for a proper Ken Burns motion without timeout
+    # Local: 25s — good balance for long-form
+    return 30.0 if is_ci_build() else 25.0
 
 
 def min_scene_duration_seconds() -> float:
-    return 8.0 if is_ci_build() else 3.0
+    return 8.0 if is_ci_build() else 5.0
 
 
 def default_scene_duration_seconds() -> float:
-    return 10.0 if is_ci_build() else 4.0
+    # CI: 20s default — fewer scenes = less ffmpeg work = faster
+    # Local: 15s default
+    return 20.0 if is_ci_build() else 15.0
 
 
 def hook_scene_duration_seconds() -> float:
-    return 8.0 if is_ci_build() else 3.0
+    # Hook is first 15s — keep it snappy
+    return 5.0 if is_ci_build() else 4.0
 
 
 def hook_window_seconds() -> float:
@@ -46,11 +51,12 @@ def hook_window_seconds() -> float:
 
 
 def use_lightweight_motion() -> bool:
+    # CI: use lightweight motion to avoid zoompan timeout on slow runners
     return is_ci_build()
 
 
 def skip_segment_enhancements() -> bool:
-    """Skip vignette, fade, and color grading in CI."""
+    """Skip vignette, fade, and color grading in CI — saves significant time."""
     return is_ci_build()
 
 
@@ -59,12 +65,12 @@ def skip_text_overlays() -> bool:
 
 
 def use_concat_stream_copy() -> bool:
-    """Concat scene clips without re-encoding."""
+    """Concat scene clips without re-encoding — critical for CI speed."""
     return is_ci_build()
 
 
 def skip_finalize_reencode() -> bool:
-    """Skip full-length caption/watermark re-encode in CI (uses YouTube auto-captions)."""
+    """Skip full-length caption/watermark re-encode in CI (YouTube auto-captions from audio)."""
     return is_ci_build()
 
 
@@ -77,16 +83,20 @@ def require_burned_captions() -> bool:
 
 
 def max_scene_count() -> int | None:
-    return 12 if is_ci_build() else None
+    # CI: cap at 15 scenes — enough for 4-6 min video at 20s/scene
+    return 15 if is_ci_build() else None
 
 
 def parallel_segment_workers() -> int:
-    return 2 if is_ci_build() else 1
+    # CI: 3 parallel workers — GitHub Actions has 2 vCPUs, 3 is fine
+    return 3 if is_ci_build() else 1
 
 
 def segment_render_timeout_seconds() -> int:
-    return 90 if is_ci_build() else 300
+    # Each scene is max 30s — give 3× buffer = 90s per scene
+    return 120 if is_ci_build() else 300
 
 
 def finalize_render_timeout_seconds() -> int:
-    return 600 if is_ci_build() else 600
+    # Full video concat + mux — give generous timeout
+    return 900 if is_ci_build() else 600
