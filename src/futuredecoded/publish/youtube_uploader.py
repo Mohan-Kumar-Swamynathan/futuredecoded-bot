@@ -56,12 +56,25 @@ def record_upload(title: str, script: str, video_id: str, format_type: str) -> N
 
 
 def _restore_token_from_env() -> object | None:
+    """Restore YouTube credentials — handles both pickle and JSON token formats."""
+    from google.oauth2.credentials import Credentials  # noqa: PLC0415
     settings = get_settings()
     if settings.youtube_token_base64:
+        raw = base64.b64decode(settings.youtube_token_base64)
+        # Try pickle first (legacy), then JSON (newer oauth tokens)
         try:
-            return pickle.loads(base64.b64decode(settings.youtube_token_base64))
+            creds = pickle.loads(raw)
+            logger.info("YouTube token restored from pickle format")
+            return creds
+        except Exception:
+            pass
+        try:
+            info = json.loads(raw.decode("utf-8"))
+            creds = Credentials.from_authorized_user_info(info, SCOPES)
+            logger.info("YouTube token restored from JSON format")
+            return creds
         except Exception as exc:
-            logger.warning("Could not decode YOUTUBE_TOKEN_BASE64: %s", exc)
+            logger.warning("Could not decode YOUTUBE_TOKEN_BASE64 (tried pickle+JSON): %s", exc)
     if settings.client_secrets_base64:
         secrets_path = settings.youtube_client_secrets
         secrets_path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,3 +197,4 @@ def upload_video(
 
     record_upload(title, script, video_id, format_type)
     return video_id
+
