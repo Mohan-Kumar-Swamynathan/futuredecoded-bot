@@ -10,11 +10,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from futuredecoded.config.channel_profile import LONG_FORM_SPEC, SHORTS_SPEC
+from futuredecoded.config.settings import get_settings
 from futuredecoded.media.audio_utils import get_audio_duration
+from futuredecoded.media.cinematic_renderer import load_word_timings, render_cinematic_scene_clip
 from futuredecoded.media.font_resolver import escape_ffmpeg_path
 from futuredecoded.media.overlay_engine import build_overlay_drawtext_filter
 from futuredecoded.media.quality_checker import validate_video_output
 from futuredecoded.media.scene_planner import VideoScene, export_scene_manifest, plan_video_scenes
+from futuredecoded.media.scene_visual_planner import (
+    build_scene_visual_plans,
+    enrich_sections_with_visual_metadata,
+)
+from futuredecoded.media.stock_video_collector import attach_stock_videos_to_scenes, is_stock_video_enabled
 from futuredecoded.media.video_export_settings import (
     export_fps,
     ffmpeg_crf,
@@ -107,19 +114,28 @@ def _build_video(
         return None
 
     resolved_caption_path = _resolve_caption_path(caption_path, audio_path)
+    settings = get_settings()
+    enriched_sections = sections or [{"label": "Story", "text": script_text}]
+    if settings.use_cinematic_renderer:
+        enriched_sections = enrich_sections_with_visual_metadata(enriched_sections, story_title)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
         raw_video = temp_path / "raw.mp4"
         scenes = plan_video_scenes(
-            sections or [{"label": "Story", "text": script_text}],
+            enriched_sections,
             duration,
             story_title,
             images,
         )
+        if settings.use_cinematic_renderer and is_stock_video_enabled():
+            visual_plans = build_scene_visual_plans(enriched_sections, story_title)
+            scenes = attach_stock_videos_to_scenes(scenes, visual_plans, width, height)
+
         export_scene_manifest(scenes, output_path.parent / "scene_manifest.json")
+        word_timings = load_word_timings(audio_path.with_suffix(".word_timings.json"))
         logger.info(
-            "Rendering %d scenes for %s (%.1fs, ci=%s, fps=%d, lightweight=%s, workers=%d, fast_finalize=%s)",
+            "Rendering %d scenes for %s (%.1fs, ci=%s, fps=%d, lightweight=%s, workers=%d, fast_finalize=%s, cinematic=%s)",
             len(scenes),
             output_path.name,
             duration,
@@ -128,8 +144,17 @@ def _build_video(
             use_lightweight_motion(),
             parallel_segment_workers(),
             skip_finalize_reencode(),
+            settings.use_cinematic_renderer,
         )
-        segment_clips = _render_scene_segments(scenes, width, height, temp_path)
+        segment_clips = _render_scene_segments(
+            scenes,
+            width,
+            height,
+            temp_path,
+            word_timings=word_timings,
+            use_cinematic_renderer=settings.use_cinematic_renderer,
+            cinematic_fallback_ken_burns=settings.cinematic_fallback_ken_burns,
+        )
         if not segment_clips:
             logger.error("Failed to render image segments")
             return None
@@ -146,10 +171,16 @@ def _build_video(
         if skip_finalize_reencode():
             shutil.copy(with_audio, output_path)
             logger.info(
-                "CI fast path: skipped caption/watermark re-encode for %s (YouTube auto-captions from audio)",
+                "CI fast path: skipped caption/watermark re-encode for %s",
                 output_path.name,
             )
-        elif _finalize_video(with_audio, output_path, resolved_caption_path, width, height):
+        elif _finalize_video(
+            with_audio,
+            output_path,
+            None if settings.use_cinematic_renderer and any(scene.stock_video_path for scene in scenes) else resolved_caption_path,
+            width,
+            height,
+        ):
             logger.info("Video finalized with watermark/captions: %s", output_path.name)
         else:
             shutil.copy(with_audio, output_path)
@@ -186,11 +217,40 @@ def _render_scene_segments(
     width: int,
     height: int,
     temp_dir: Path,
+    word_timings: list | None = None,
+    use_cinematic_renderer: bool = False,
+    cinematic_fallback_ken_burns: bool = True,
 ) -> list[Path]:
     worker_count = parallel_segment_workers()
     if worker_count <= 1 or len(scenes) <= 1:
-        return _render_scene_segments_sequential(scenes, width, height, temp_dir)
-    return _render_scene_segments_parallel(scenes, width, height, temp_dir, worker_count)
+        return _render_scene_segments_sequential(
+            scenes,
+            width,
+            height,
+            temp_dir,
+            word_timings=word_timings,
+            use_cinematic_renderer=use_cinematic_renderer,
+            cinematic_fallback_ken_burns=cinematic_fallback_ken_burns,
+        )
+    return _render_scene_segments_parallel(
+        scenes,
+        width,
+        height,
+        temp_dir,
+        worker_count,
+        word_timings=word_timings,
+        use_cinematic_renderer=use_cinematic_renderer,
+        cinematic_fallback_ken_burns=cinematic_fallback_ken_burns,
+    )
+
+
+def _build_scene_start_times(scenes: list[VideoScene]) -> list[float]:
+    scene_starts: list[float] = []
+    elapsed = 0.0
+    for scene in scenes:
+        scene_starts.append(elapsed)
+        elapsed += scene.duration_seconds
+    return scene_starts
 
 
 def _render_scene_segments_sequential(
@@ -198,10 +258,25 @@ def _render_scene_segments_sequential(
     width: int,
     height: int,
     temp_dir: Path,
+    word_timings: list | None = None,
+    use_cinematic_renderer: bool = False,
+    cinematic_fallback_ken_burns: bool = True,
 ) -> list[Path]:
     clip_paths: list[Path] = []
+    scene_starts = _build_scene_start_times(scenes)
     for index, scene in enumerate(scenes):
-        clip_path = _render_scene_clip(scene, index, len(scenes), width, height, temp_dir)
+        clip_path = _render_scene_clip(
+            scene,
+            index,
+            len(scenes),
+            width,
+            height,
+            temp_dir,
+            scene_start_seconds=scene_starts[index],
+            word_timings=word_timings or [],
+            use_cinematic_renderer=use_cinematic_renderer,
+            cinematic_fallback_ken_burns=cinematic_fallback_ken_burns,
+        )
         if clip_path is not None:
             clip_paths.append(clip_path)
     return clip_paths
@@ -213,12 +288,28 @@ def _render_scene_segments_parallel(
     height: int,
     temp_dir: Path,
     worker_count: int,
+    word_timings: list | None = None,
+    use_cinematic_renderer: bool = False,
+    cinematic_fallback_ken_burns: bool = True,
 ) -> list[Path]:
     rendered_clips: dict[int, Path] = {}
+    scene_starts = _build_scene_start_times(scenes)
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
-            executor.submit(_render_scene_clip, scene, index, len(scenes), width, height, temp_dir): index
+            executor.submit(
+                _render_scene_clip,
+                scene,
+                index,
+                len(scenes),
+                width,
+                height,
+                temp_dir,
+                scene_start_seconds=scene_starts[index],
+                word_timings=word_timings or [],
+                use_cinematic_renderer=use_cinematic_renderer,
+                cinematic_fallback_ken_burns=cinematic_fallback_ken_burns,
+            ): index
             for index, scene in enumerate(scenes)
         }
         for future in as_completed(futures):
@@ -237,12 +328,42 @@ def _render_scene_clip(
     width: int,
     height: int,
     temp_dir: Path,
+    scene_start_seconds: float = 0.0,
+    word_timings: list | None = None,
+    use_cinematic_renderer: bool = False,
+    cinematic_fallback_ken_burns: bool = True,
 ) -> Path | None:
+    clip_path = temp_dir / f"scene_{index:02d}.mp4"
+    if (
+        use_cinematic_renderer
+        and scene.stock_video_path
+        and scene.stock_video_path.exists()
+    ):
+        logger.info(
+            "Rendering cinematic scene %d/%d (%.1fs, stock=%s)",
+            index + 1,
+            scene_count,
+            scene.duration_seconds,
+            scene.stock_video_path.name,
+        )
+        if render_cinematic_scene_clip(
+            stock_video_path=scene.stock_video_path,
+            clip_path=clip_path,
+            scene_duration_seconds=scene.duration_seconds,
+            scene_start_seconds=scene_start_seconds,
+            word_timings=word_timings or [],
+            section_label=scene.section_label,
+            width=width,
+            height=height,
+        ):
+            return clip_path
+        if not cinematic_fallback_ken_burns:
+            return None
+
     image_path = scene.image_path
     if not image_path or not image_path.exists():
         return None
 
-    clip_path = temp_dir / f"scene_{index:02d}.mp4"
     logger.info(
         "Rendering scene %d/%d (%.1fs, %s)",
         index + 1,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from futuredecoded.config.visual_style import VisualStyle, style_query_suffix
+
 STOP_WORDS = frozenset({
     "about", "after", "also", "amid", "amidst", "among", "been", "from", "into",
     "just", "more", "news", "over", "says", "said", "that", "the", "their", "this",
@@ -112,3 +114,74 @@ def score_image_relevance(story_title: str, alt_text: str, query: str) -> float:
         score -= 0.5
 
     return max(0.0, min(1.0, score))
+
+
+def score_video_tag_relevance(relevance_text: str, tags: str) -> float:
+    """Score Pixabay/Pexels video tags against an English visual prompt."""
+    prompt_tokens = set(_tokenize(relevance_text))
+    tag_tokens = set(_tokenize(tags))
+    if not prompt_tokens or not tag_tokens:
+        return 0.0
+    overlap = prompt_tokens & tag_tokens
+    return len(overlap) / max(len(prompt_tokens), 1)
+
+
+def build_section_visual_prompt(
+    section_label: str,
+    section_text: str,
+    story_title: str,
+    visual_style: str = "real_footage",
+) -> str:
+    """Concrete English visual brief for one section."""
+    label_tokens = _tokenize(section_label)
+    text_tokens = _tokenize(section_text)
+    title_tokens = _tokenize(story_title)
+    tokens = label_tokens + text_tokens[:8]
+    if len(tokens) < 2:
+        tokens = title_tokens[:5]
+
+    entity_queries = _build_entity_queries(title_tokens + tokens)
+    if entity_queries:
+        return entity_queries[0]
+
+    core_phrase = " ".join(tokens[:5]).strip()
+    if not core_phrase:
+        core_phrase = "artificial intelligence technology news"
+    suffix = style_query_suffix(
+        VisualStyle.MOTION_GRAPHICS if visual_style == "motion_graphics" else VisualStyle.REAL_FOOTAGE
+    )
+    return f"{core_phrase} {suffix}".strip()
+
+
+def build_section_search_keywords(
+    section_label: str,
+    section_text: str,
+    story_title: str,
+    visual_style: str = "real_footage",
+    image_search_prompt: str = "",
+) -> list[str]:
+    """Return 2-4 English stock video queries for one section."""
+    prompt = image_search_prompt or build_section_visual_prompt(
+        section_label,
+        section_text,
+        story_title,
+        visual_style,
+    )
+    keywords: list[str] = [prompt]
+    section_tokens = _tokenize(f"{section_label} {section_text}")
+    if len(section_tokens) >= 2:
+        keywords.append(" ".join(section_tokens[:4]))
+    keywords.extend(_build_entity_queries(_tokenize(story_title) + section_tokens)[:2])
+    suffix = style_query_suffix(
+        VisualStyle.MOTION_GRAPHICS if visual_style == "motion_graphics" else VisualStyle.REAL_FOOTAGE
+    )
+    keywords.append(f"{prompt.split()[0]} {suffix}".strip())
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for keyword in keywords:
+        normalized = " ".join(keyword.lower().split())
+        if normalized and normalized not in seen:
+            deduped.append(keyword.strip())
+            seen.add(normalized)
+    return deduped[:4]

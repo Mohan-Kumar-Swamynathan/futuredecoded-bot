@@ -45,6 +45,10 @@ class VideoScene:
     text_overlay: str | None = None
     is_hook_scene: bool = False
     scene_description: str = ""
+    image_search_prompt: str = ""
+    search_keywords: tuple[str, ...] = ()
+    visual_style: str = "real_footage"
+    stock_video_path: Path | None = None
 
 
 def plan_video_scenes(
@@ -71,16 +75,23 @@ def plan_video_scenes(
             overlay_text = _extract_overlay_text(story_title, story_title)
 
         image_path = deduped_images[index % len(deduped_images)] if deduped_images else None
+        image_search_prompt = str(section.get("image_search_prompt", "")).strip()
+        raw_keywords = section.get("search_keywords") or []
+        search_keywords = tuple(str(keyword).strip() for keyword in raw_keywords if str(keyword).strip())
+        visual_style = str(section.get("visual_style", "real_footage")).strip() or "real_footage"
         scenes.append(
             VideoScene(
                 section_label=label,
                 duration_seconds=duration,
-                visual_query=f"{label} {section_text[:80]}".strip(),
+                visual_query=image_search_prompt or f"{label} {section_text[:80]}".strip(),
                 image_path=image_path,
                 animation_type=ANIMATION_CYCLE[index % len(ANIMATION_CYCLE)],
                 text_overlay=overlay_text,
                 is_hook_scene=is_hook,
                 scene_description=section_text[:160],
+                image_search_prompt=image_search_prompt,
+                search_keywords=search_keywords,
+                visual_style=visual_style,
             )
         )
 
@@ -99,6 +110,10 @@ def export_scene_manifest(scenes: list[VideoScene], output_path: Path) -> None:
             "visual_query": scene.visual_query,
             "scene_description": scene.scene_description,
             "image_path": str(scene.image_path) if scene.image_path else None,
+            "image_search_prompt": scene.image_search_prompt,
+            "search_keywords": list(scene.search_keywords),
+            "visual_style": scene.visual_style,
+            "stock_video_path": str(scene.stock_video_path) if scene.stock_video_path else None,
         }
         for scene in scenes
     ]
