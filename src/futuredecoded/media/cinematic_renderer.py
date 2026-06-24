@@ -155,6 +155,7 @@ def _build_video_filter_chain(
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
         f"crop={width}:{height}",
         "eq=contrast=1.05:saturation=1.08",
+        _build_subtitle_gradient_filter(width, height),
     ]
 
     if include_subtitles and word_timings and ffmpeg_supports_filter("ass"):
@@ -175,6 +176,12 @@ def _build_video_filter_chain(
         filters.append(section_filter)
 
     return ",".join(filters) if filters else None
+
+
+def _build_subtitle_gradient_filter(width: int, height: int) -> str:
+    gradient_height = int(height * 0.28)
+    top_y = max(height - gradient_height, 0)
+    return f"drawbox=x=0:y={top_y}:w={width}:h={gradient_height}:color=black@0.50:t=fill"
 
 
 def _build_section_label_filter(section_label: str, width: int) -> str | None:

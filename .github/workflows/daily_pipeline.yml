@@ -89,7 +89,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_MODELS_MODEL: openai/gpt-4o-mini
           USE_CINEMATIC_RENDERER: "true"
-          CINEMATIC_FALLBACK_KEN_BURNS: "true"
+          CINEMATIC_FALLBACK_KEN_BURNS: "false"
           STOCK_VIDEO_PROVIDER: pexels
         run: |
           if [ -n "$YOUTUBE_TOKEN_BASE64" ] && [ -n "$CLIENT_SECRETS_BASE64" ]; then

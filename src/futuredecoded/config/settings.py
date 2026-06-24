@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     dry_run: bool = False
 
     use_cinematic_renderer: bool = True
-    cinematic_fallback_ken_burns: bool = True
+    cinematic_fallback_ken_burns: bool = False
     stock_video_provider: str = "pexels"
 
     @property

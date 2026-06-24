@@ -63,14 +63,25 @@ def build_visual_search_queries(
 
 def _build_entity_queries(title_tokens: list[str]) -> list[str]:
     queries: list[str] = []
+    token_set = {token.lower() for token in title_tokens}
     joined = " ".join(title_tokens).lower()
+    normalized_joined = joined.replace("-", "")
 
     entity_visuals = {
+        "gptzero": [
+            "AI content detection software",
+            "plagiarism detection technology screen",
+            "AI writing analysis dashboard",
+        ],
+        "superhuman": [
+            "email productivity software",
+            "business professional laptop workflow",
+            "startup office technology team",
+        ],
         "openai": ["ChatGPT interface", "AI neural network", "developer coding AI"],
         "anthropic": ["AI safety research lab", "artificial intelligence server room", "AI ethics technology"],
         "google": ["Google Gemini AI", "Android technology", "data center cloud computing"],
         "gemini": ["Google Gemini AI interface", "AI assistant technology"],
-        "gpt": ["ChatGPT interface", "AI language model visualization"],
         "claude": ["AI assistant interface", "enterprise AI software"],
         "tesla": ["Tesla electric vehicle", "Tesla factory automation", "EV charging station"],
         "nvidia": ["NVIDIA GPU data center", "AI chip technology", "machine learning hardware"],
@@ -80,15 +91,20 @@ def _build_entity_queries(title_tokens: list[str]) -> list[str]:
         "meta": ["virtual reality headset technology", "metaverse digital network"],
         "microsoft": ["cloud computing server room", "enterprise software developer"],
         "startup": ["technology startup office", "innovation brainstorming team"],
+        "acquires": ["business acquisition technology", "startup merger handshake"],
+        "acquisition": ["business merger technology office", "corporate acquisition news"],
+        "detection": ["cybersecurity monitoring screen", "AI fraud detection technology"],
         "ev": ["electric vehicle charging", "battery factory technology"],
         "chip": ["semiconductor fabrication", "computer chip macro"],
         "regulation": ["government technology policy meeting", "capitol building technology"],
     }
 
     for keyword, visuals in entity_visuals.items():
-        if keyword in joined:
+        if keyword in token_set or keyword in normalized_joined:
             queries.extend(visuals[:2])
 
+    if "gpt" in token_set or re.search(r"\bgpt[\s-]?\d", joined):
+        queries.extend(["ChatGPT interface", "AI language model visualization"])
     if "ceo" in joined:
         queries.append("CEO technology keynote presentation")
     if "launch" in joined or "release" in joined:
@@ -138,19 +154,20 @@ def build_section_visual_prompt(
     title_tokens = _tokenize(story_title)
     tokens = label_tokens + text_tokens[:8]
     if len(tokens) < 2:
-        tokens = title_tokens[:5]
+        tokens = title_tokens[:6]
 
-    entity_queries = _build_entity_queries(title_tokens + tokens)
-    if entity_queries:
-        return entity_queries[0]
-
-    core_phrase = " ".join(tokens[:5]).strip()
-    if not core_phrase:
-        core_phrase = "artificial intelligence technology news"
     suffix = style_query_suffix(
         VisualStyle.MOTION_GRAPHICS if visual_style == "motion_graphics" else VisualStyle.REAL_FOOTAGE
     )
-    return f"{core_phrase} {suffix}".strip()
+    core_phrase = " ".join(tokens[:6]).strip()
+    if core_phrase:
+        return f"{core_phrase} {suffix}".strip()
+
+    entity_queries = _build_entity_queries(title_tokens)
+    if entity_queries:
+        return entity_queries[0]
+
+    return f"artificial intelligence technology news {suffix}".strip()
 
 
 def build_section_search_keywords(

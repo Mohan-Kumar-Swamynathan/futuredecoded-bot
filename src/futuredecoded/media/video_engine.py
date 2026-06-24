@@ -195,6 +195,7 @@ def _build_video(
         output_path,
         resolved_caption_path,
         [scene.duration_seconds for scene in scenes],
+        is_short_form=is_short_form,
     )
     if not quality_report.passed:
         logger.warning("Export completed with quality warnings: %s", "; ".join(quality_report.issues[:3]))
@@ -360,6 +361,12 @@ def _render_scene_clip(
             height=height,
         ):
             return clip_path
+        logger.error(
+            "Cinematic render failed for scene %d/%d with stock clip %s",
+            index + 1,
+            scene_count,
+            scene.stock_video_path.name,
+        )
         if not cinematic_fallback_ken_burns:
             return None
 

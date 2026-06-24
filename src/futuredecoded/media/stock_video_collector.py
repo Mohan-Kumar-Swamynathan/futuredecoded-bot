@@ -39,8 +39,8 @@ def fetch_scene_stock_video(
 
     settings = get_settings()
     orientation = "landscape" if width >= height else "portrait"
-    queries = list(visual_plan.search_keywords) or [visual_plan.image_search_prompt]
-    primary_query = queries[0]
+    keywords = list(visual_plan.search_keywords) or [visual_plan.image_search_prompt]
+    primary_query = keywords[scene_index % len(keywords)]
     cache_dir = settings.cache_dir / "stock_videos" / orientation
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_key = hashlib.md5(
@@ -53,6 +53,7 @@ def fetch_scene_stock_video(
         return target_path
 
     provider = _resolve_stock_video_provider(settings)
+    queries = keywords
     if provider == "pexels" and settings.pexels_api_key.strip():
         clip_path = _fetch_from_pexels(
             queries,

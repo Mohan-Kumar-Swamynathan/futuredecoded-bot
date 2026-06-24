@@ -16,9 +16,9 @@ def test_ci_export_profile_activates_in_github_actions(monkeypatch):
     assert is_ci_build() is True
     assert export_fps() == 24
     assert use_lightweight_motion() is True
-    assert max_scene_count() is None
-    assert max_scene_count(is_short_form=True) == 8
-    assert skip_finalize_reencode() is True
+    assert max_scene_count() == 22
+    assert max_scene_count(is_short_form=True) == 6
+    assert skip_finalize_reencode() is False
 
 
 def test_ci_ken_burns_profile_keeps_scene_cap(monkeypatch):
@@ -45,14 +45,14 @@ def test_calculate_scene_durations_caps_scene_count_for_shorts_in_ci(monkeypatch
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("USE_CINEMATIC_RENDERER", "true")
     durations = _calculate_scene_durations(49.0, is_short_form=True)
-    assert len(durations) <= 8
+    assert len(durations) <= 6
     assert round(sum(durations), 1) == 49.0
 
 
-def test_calculate_scene_durations_keeps_fast_cuts_for_cinematic_long_form(monkeypatch):
+def test_calculate_scene_durations_limits_long_form_scene_count_in_ci(monkeypatch):
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("USE_CINEMATIC_RENDERER", "true")
     durations = _calculate_scene_durations(198.5)
-    assert len(durations) > 12
-    assert max(durations) <= 5.0
+    assert len(durations) <= 22
+    assert max(durations) <= 14.0
     assert round(sum(durations), 1) == 198.5

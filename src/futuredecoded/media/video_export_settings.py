@@ -26,7 +26,7 @@ def ffmpeg_preset() -> str:
 
 
 def ffmpeg_crf() -> str:
-    return "23" if is_ci_build() else "21"
+    return "22" if is_ci_build() else "21"
 
 
 def ffmpeg_thread_count() -> int:
@@ -35,25 +35,25 @@ def ffmpeg_thread_count() -> int:
 
 def max_scene_duration_seconds(is_short_form: bool = False) -> float:
     if use_cinematic_export_profile():
-        return 7.0 if is_short_form else 5.0
+        return 9.0 if is_short_form else 14.0
     return 30.0 if is_ci_build() else 5.0
 
 
 def min_scene_duration_seconds() -> float:
     if use_cinematic_export_profile():
-        return 3.0
+        return 4.0
     return 8.0 if is_ci_build() else 2.0
 
 
 def default_scene_duration_seconds(is_short_form: bool = False) -> float:
     if use_cinematic_export_profile():
-        return 5.0 if is_short_form else 4.0
+        return 5.0 if is_short_form else 10.0
     return 20.0 if is_ci_build() else 15.0
 
 
 def hook_scene_duration_seconds(is_short_form: bool = False) -> float:
     if use_cinematic_export_profile():
-        return 4.0 if is_short_form else 3.0
+        return 4.0 if is_short_form else 5.0
     return 5.0 if is_ci_build() else 3.0
 
 
@@ -74,10 +74,14 @@ def skip_text_overlays() -> bool:
 
 
 def use_concat_stream_copy() -> bool:
+    if use_cinematic_export_profile():
+        return False
     return is_ci_build()
 
 
 def skip_finalize_reencode() -> bool:
+    if use_cinematic_export_profile():
+        return False
     return is_ci_build()
 
 
@@ -91,7 +95,7 @@ def require_burned_captions() -> bool:
 
 def max_scene_count(is_short_form: bool = False) -> int | None:
     if use_cinematic_export_profile():
-        return 8 if is_short_form else None
+        return 6 if is_short_form else 22
     return 12 if is_ci_build() else None
 
 
@@ -102,7 +106,7 @@ def parallel_segment_workers() -> int:
 
 
 def segment_render_timeout_seconds() -> int:
-    return 120 if is_ci_build() else 300
+    return 180 if is_ci_build() else 300
 
 
 def finalize_render_timeout_seconds() -> int:
