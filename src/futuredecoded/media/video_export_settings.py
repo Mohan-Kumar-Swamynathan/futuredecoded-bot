@@ -33,9 +33,9 @@ def ffmpeg_thread_count() -> int:
     return 2 if is_ci_build() else 0
 
 
-def max_scene_duration_seconds() -> float:
+def max_scene_duration_seconds(is_short_form: bool = False) -> float:
     if use_cinematic_export_profile():
-        return 5.0
+        return 7.0 if is_short_form else 5.0
     return 30.0 if is_ci_build() else 5.0
 
 
@@ -45,15 +45,15 @@ def min_scene_duration_seconds() -> float:
     return 8.0 if is_ci_build() else 2.0
 
 
-def default_scene_duration_seconds() -> float:
+def default_scene_duration_seconds(is_short_form: bool = False) -> float:
     if use_cinematic_export_profile():
-        return 4.0
+        return 5.0 if is_short_form else 4.0
     return 20.0 if is_ci_build() else 15.0
 
 
-def hook_scene_duration_seconds() -> float:
+def hook_scene_duration_seconds(is_short_form: bool = False) -> float:
     if use_cinematic_export_profile():
-        return 3.0
+        return 4.0 if is_short_form else 3.0
     return 5.0 if is_ci_build() else 3.0
 
 
@@ -62,12 +62,10 @@ def hook_window_seconds() -> float:
 
 
 def use_lightweight_motion() -> bool:
-    # CI: use lightweight motion to avoid zoompan timeout on slow runners
     return is_ci_build()
 
 
 def skip_segment_enhancements() -> bool:
-    """Skip vignette, fade, and color grading in CI — saves significant time."""
     return is_ci_build()
 
 
@@ -76,12 +74,10 @@ def skip_text_overlays() -> bool:
 
 
 def use_concat_stream_copy() -> bool:
-    """Concat scene clips without re-encoding — critical for CI speed."""
     return is_ci_build()
 
 
 def skip_finalize_reencode() -> bool:
-    """Skip full-length caption/watermark re-encode in CI (YouTube auto-captions from audio)."""
     return is_ci_build()
 
 
@@ -93,8 +89,9 @@ def require_burned_captions() -> bool:
     return not is_ci_build()
 
 
-def max_scene_count() -> int | None:
-    # CI: cap at 15 scenes — enough for 4-6 min video at 20s/scene
+def max_scene_count(is_short_form: bool = False) -> int | None:
+    if use_cinematic_export_profile():
+        return 8 if is_short_form else None
     return 12 if is_ci_build() else None
 
 
@@ -105,10 +102,8 @@ def parallel_segment_workers() -> int:
 
 
 def segment_render_timeout_seconds() -> int:
-    # Each scene is max 30s — give 3× buffer = 90s per scene
     return 120 if is_ci_build() else 300
 
 
 def finalize_render_timeout_seconds() -> int:
-    # Full video concat + mux — give generous timeout
     return 900 if is_ci_build() else 600

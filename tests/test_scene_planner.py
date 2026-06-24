@@ -41,3 +41,20 @@ def test_plan_video_scenes_assigns_motion_and_overlay(monkeypatch):
 
     assert scenes[0].animation_type in {"zoom_in", "zoom_out", "pan_left", "pan_right"}
     assert scenes[0].text_overlay is not None
+
+
+def test_plan_video_scenes_even_merge_avoids_giant_first_scene(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("USE_CINEMATIC_RENDERER", "true")
+    sections = [{"label": "Hook", "text": "OpenAI launches GPT-5"}]
+    images = [Path("a.jpg")]
+    scenes = plan_video_scenes(
+        sections,
+        total_duration_seconds=215.0,
+        story_title="OpenAI GPT-5",
+        image_paths=images,
+    )
+
+    assert len(scenes) > 12
+    assert max(scene.duration_seconds for scene in scenes) <= 5.5
+    assert abs(sum(scene.duration_seconds for scene in scenes) - 215.0) < 1.0

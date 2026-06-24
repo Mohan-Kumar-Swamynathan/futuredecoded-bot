@@ -86,6 +86,7 @@ def build_short_video(
         caption_path=caption_path,
         sections=sections,
         story_title=story_title or script_text[:80],
+        is_short_form=True,
     )
 
 
@@ -99,6 +100,7 @@ def _build_video(
     caption_path: Path | None,
     sections: list[dict[str, str]] | None = None,
     story_title: str = "",
+    is_short_form: bool = False,
 ) -> Path | None:
     if not shutil.which("ffmpeg"):
         logger.error("ffmpeg not found")
@@ -127,6 +129,7 @@ def _build_video(
             duration,
             story_title,
             images,
+            is_short_form=is_short_form,
         )
         if settings.use_cinematic_renderer and is_stock_video_enabled():
             visual_plans = build_scene_visual_plans(enriched_sections, story_title)

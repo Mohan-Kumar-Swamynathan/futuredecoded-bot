@@ -117,6 +117,9 @@ def build_ass_from_srt(srt_path: Path, ass_path: Path, play_res_x: int = 1920, p
 
 
 def _build_ass_header(play_res_x: int, play_res_y: int) -> str:
+    is_portrait = play_res_y > play_res_x
+    font_size = 58 if is_portrait else 46
+    margin_vertical = 160 if is_portrait else 90
     return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {play_res_x}
@@ -125,7 +128,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,DejaVu Sans Bold,46,&H00FFFFFF,&H0000D7FF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,3,1,2,80,80,90,1
+Style: Default,DejaVu Sans Bold,{font_size},&H00FFFFFF,&H0000D7FF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,3,1,2,80,80,{margin_vertical},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

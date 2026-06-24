@@ -44,7 +44,7 @@ def fetch_scene_stock_video(
     cache_dir = settings.cache_dir / "stock_videos" / orientation
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_key = hashlib.md5(
-        f"{orientation}|{primary_query}".encode(),
+        f"{orientation}|{scene_index}|{primary_query}".encode(),
         usedforsecurity=False,
     ).hexdigest()[:20]
     target_path = cache_dir / f"{cache_key}.mp4"
@@ -104,7 +104,7 @@ def attach_stock_videos_to_scenes(
 
     updated_scenes: list[VideoScene] = []
     for index, scene in enumerate(scenes):
-        plan = visual_plans[index % len(visual_plans)]
+        plan = _resolve_visual_plan_for_scene(scene, visual_plans, index)
         stock_video_path = fetch_scene_stock_video(plan, index, width, height)
         updated_scenes.append(
             VideoScene(
@@ -125,6 +125,18 @@ def attach_stock_videos_to_scenes(
     return updated_scenes
 
 
+def _resolve_visual_plan_for_scene(
+    scene,
+    visual_plans: list[SceneVisualPlan],
+    scene_index: int,
+) -> SceneVisualPlan:
+    section_label = str(getattr(scene, "section_label", "")).strip().lower()
+    for plan in visual_plans:
+        if plan.section_label.strip().lower() == section_label:
+            return plan
+    return visual_plans[scene_index % len(visual_plans)]
+
+
 def _resolve_stock_video_provider(settings) -> str:
     configured = getattr(settings, "stock_video_provider", "pexels").strip().lower()
     if configured in {"pexels", "pixabay"}:
@@ -140,7 +152,8 @@ def _fetch_from_pexels(
     target_path: Path,
     api_key: str,
 ) -> Path | None:
-    for query_index, query in enumerate(queries):
+    for query_offset, query in enumerate(queries):
+        query_index = scene_index + query_offset
         video_url = _search_pexels_video_url(
             query=query,
             api_key=api_key,
@@ -164,7 +177,8 @@ def _fetch_from_pixabay(
     api_key: str,
 ) -> Path | None:
     video_type = "animation" if visual_style == VisualStyle.MOTION_GRAPHICS.value else "film"
-    for query_index, query in enumerate(queries):
+    for query_offset, query in enumerate(queries):
+        query_index = scene_index + query_offset
         video_url = _search_pixabay_video_url(
             query=query,
             api_key=api_key,

@@ -56,11 +56,12 @@ def plan_video_scenes(
     total_duration_seconds: float,
     story_title: str,
     image_paths: list[Path],
+    is_short_form: bool = False,
 ) -> list[VideoScene]:
     if total_duration_seconds <= 0:
         return []
 
-    scene_durations = _calculate_scene_durations(total_duration_seconds)
+    scene_durations = _calculate_scene_durations(total_duration_seconds, is_short_form=is_short_form)
     deduped_images = _dedupe_image_order(image_paths, len(scene_durations))
     scenes: list[VideoScene] = []
 
@@ -120,13 +121,16 @@ def export_scene_manifest(scenes: list[VideoScene], output_path: Path) -> None:
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _calculate_scene_durations(total_duration_seconds: float) -> list[float]:
+def _calculate_scene_durations(
+    total_duration_seconds: float,
+    is_short_form: bool = False,
+) -> list[float]:
     durations: list[float] = []
     elapsed = 0.0
     hook_window = hook_window_seconds()
-    hook_scene = hook_scene_duration_seconds()
-    default_scene = default_scene_duration_seconds()
-    max_scene = max_scene_duration_seconds()
+    hook_scene = hook_scene_duration_seconds(is_short_form=is_short_form)
+    default_scene = default_scene_duration_seconds(is_short_form=is_short_form)
+    max_scene = max_scene_duration_seconds(is_short_form=is_short_form)
     min_scene = min_scene_duration_seconds()
 
     while elapsed < total_duration_seconds - 0.25:
@@ -144,27 +148,31 @@ def _calculate_scene_durations(total_duration_seconds: float) -> list[float]:
     if durations and elapsed < total_duration_seconds:
         durations[-1] = round(durations[-1] + (total_duration_seconds - elapsed), 2)
 
-    scene_limit = max_scene_count()
+    scene_limit = max_scene_count(is_short_form=is_short_form)
     if scene_limit is not None and len(durations) > scene_limit:
-        durations = _merge_scene_durations_to_limit(durations, scene_limit)
+        durations = _merge_scene_durations_to_limit(durations, scene_limit, max_scene)
     return durations
 
 
-def _merge_scene_durations_to_limit(durations: list[float], scene_limit: int) -> list[float]:
-    merged = durations.copy()
-    max_scene = max_scene_duration_seconds()
+def _merge_scene_durations_to_limit(
+    durations: list[float],
+    scene_limit: int,
+    max_scene_seconds: float,
+) -> list[float]:
+    """Redistribute scene durations evenly without creating one giant first clip."""
+    if len(durations) <= scene_limit:
+        return durations
 
-    while len(merged) > scene_limit:
-        merge_index = 0
-        smallest_pair_sum = merged[0] + merged[1]
-        for index in range(len(merged) - 1):
-            pair_sum = merged[index] + merged[index + 1]
-            if pair_sum <= max_scene * 1.5 and pair_sum < smallest_pair_sum:
-                merge_index = index
-                smallest_pair_sum = pair_sum
-        merged[merge_index] = round(merged[merge_index] + merged[merge_index + 1], 2)
-        del merged[merge_index + 1]
+    total_seconds = sum(durations)
+    even_duration = total_seconds / scene_limit
+    if even_duration > max_scene_seconds:
+        return durations
 
+    capped_duration = round(min(even_duration, max_scene_seconds), 2)
+    merged = [capped_duration] * scene_limit
+    merged[-1] = round(total_seconds - (capped_duration * (scene_limit - 1)), 2)
+    if merged[-1] <= 0:
+        merged[-1] = capped_duration
     return merged
 
 
