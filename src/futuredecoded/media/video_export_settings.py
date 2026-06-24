@@ -9,6 +9,14 @@ def is_ci_build() -> bool:
     return os.getenv("GITHUB_ACTIONS", "").lower() == "true"
 
 
+def use_cinematic_renderer_enabled() -> bool:
+    return os.getenv("USE_CINEMATIC_RENDERER", "true").lower() not in {"0", "false", "no", "off"}
+
+
+def use_cinematic_export_profile() -> bool:
+    return is_ci_build() and use_cinematic_renderer_enabled()
+
+
 def export_fps() -> int:
     return 24 if is_ci_build() else 30
 
@@ -26,23 +34,26 @@ def ffmpeg_thread_count() -> int:
 
 
 def max_scene_duration_seconds() -> float:
-    # CI: 30s max — enough for a proper Ken Burns motion without timeout
-    # Local: 25s — good balance for long-form
+    if use_cinematic_export_profile():
+        return 5.0
     return 30.0 if is_ci_build() else 5.0
 
 
 def min_scene_duration_seconds() -> float:
+    if use_cinematic_export_profile():
+        return 3.0
     return 8.0 if is_ci_build() else 2.0
 
 
 def default_scene_duration_seconds() -> float:
-    # CI: 20s default — fewer scenes = less ffmpeg work = faster
-    # Local: 15s default
+    if use_cinematic_export_profile():
+        return 4.0
     return 20.0 if is_ci_build() else 15.0
 
 
 def hook_scene_duration_seconds() -> float:
-    # Hook is first 15s — keep it snappy
+    if use_cinematic_export_profile():
+        return 3.0
     return 5.0 if is_ci_build() else 3.0
 
 
@@ -88,7 +99,8 @@ def max_scene_count() -> int | None:
 
 
 def parallel_segment_workers() -> int:
-    # CI: 3 parallel workers — GitHub Actions has 2 vCPUs, 3 is fine
+    if use_cinematic_export_profile():
+        return 1
     return 3 if is_ci_build() else 1
 
 

@@ -44,7 +44,7 @@ def fetch_scene_stock_video(
     cache_dir = settings.cache_dir / "stock_videos" / orientation
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_key = hashlib.md5(
-        f"{orientation}|{scene_index}|{primary_query}".encode(),
+        f"{orientation}|{primary_query}".encode(),
         usedforsecurity=False,
     ).hexdigest()[:20]
     target_path = cache_dir / f"{cache_key}.mp4"
@@ -344,3 +344,12 @@ def probe_video_duration(video_path: Path) -> float:
         return max(float(result.stdout.strip()), 0.1)
     except ValueError:
         return 0.0
+
+
+def validate_stock_video_clip(video_path: Path, minimum_bytes: int = 50_000) -> bool:
+    """Return True when a downloaded stock clip is present and decodable."""
+    if not video_path.exists():
+        return False
+    if video_path.stat().st_size < minimum_bytes:
+        return False
+    return probe_video_duration(video_path) > 0.0

@@ -2,28 +2,23 @@
 
 from __future__ import annotations
 
-import io
 import json
 import logging
+import re
 import subprocess
-import textwrap
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
-
-from futuredecoded.media.caption_engine import WordTiming
-from futuredecoded.media.font_resolver import resolve_drawtext_font_path
-from futuredecoded.media.stock_video_collector import probe_video_duration
+from futuredecoded.media.caption_engine import WordTiming, build_scene_ass_subtitles
+from futuredecoded.media.font_resolver import escape_ffmpeg_path, ffmpeg_supports_filter, resolve_drawtext_font_path
+from futuredecoded.media.stock_video_collector import probe_video_duration, validate_stock_video_clip
 from futuredecoded.media.video_export_settings import (
-    export_fps,
     ffmpeg_crf,
     ffmpeg_preset,
+    ffmpeg_thread_count,
     segment_render_timeout_seconds,
 )
 
 logger = logging.getLogger(__name__)
-
-BOTTOM_GRADIENT_RATIO = 0.28
 
 
 def load_word_timings(word_timing_path: Path) -> list[WordTiming]:
@@ -51,70 +46,170 @@ def render_cinematic_scene_clip(
     height: int,
 ) -> bool:
     """Render one scene clip with stock footage and word-synced bottom subtitles."""
-    fps = export_fps()
-    frame_count = max(int(scene_duration_seconds * fps), fps)
-    font_path = resolve_drawtext_font_path()
-    font = _load_subtitle_font(width, font_path)
-    narration_words = [timing.text for timing in word_timings]
+    if not validate_stock_video_clip(stock_video_path):
+        logger.warning("Invalid stock clip for cinematic scene: %s", stock_video_path)
+        return False
 
-    process = subprocess.Popen(
-        [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "-s",
-            f"{width}x{height}",
-            "-r",
-            str(fps),
-            "-i",
-            "pipe:0",
-            "-t",
-            f"{scene_duration_seconds:.2f}",
-            "-c:v",
-            "libx264",
-            "-preset",
-            ffmpeg_preset(),
-            "-crf",
-            ffmpeg_crf(),
-            "-pix_fmt",
-            "yuv420p",
-            str(clip_path),
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+    if _render_cinematic_scene_with_ffmpeg(
+        stock_video_path=stock_video_path,
+        clip_path=clip_path,
+        scene_duration_seconds=scene_duration_seconds,
+        scene_start_seconds=scene_start_seconds,
+        word_timings=word_timings,
+        section_label=section_label,
+        width=width,
+        height=height,
+        include_subtitles=True,
+    ):
+        return True
+
+    logger.warning("Cinematic ASS burn failed — retrying stock video without subtitles")
+    return _render_cinematic_scene_with_ffmpeg(
+        stock_video_path=stock_video_path,
+        clip_path=clip_path,
+        scene_duration_seconds=scene_duration_seconds,
+        scene_start_seconds=scene_start_seconds,
+        word_timings=word_timings,
+        section_label=section_label,
+        width=width,
+        height=height,
+        include_subtitles=False,
     )
 
-    try:
-        for frame_index in range(frame_count):
-            local_time = frame_index / fps
-            global_time = scene_start_seconds + local_time
-            visible_word_count = _count_visible_words(word_timings, global_time)
-            visual_progress = (local_time / max(scene_duration_seconds, 0.1)) % 1.0
-            frame = _render_cinematic_frame(
-                stock_video_path=stock_video_path,
-                visual_progress=visual_progress,
-                section_label=section_label,
-                narration_words=narration_words,
-                visible_word_count=visible_word_count,
-                width=width,
-                height=height,
-                font=font,
-            )
-            process.stdin.write(frame.tobytes())
-        process.stdin.close()
-        _, stderr = process.communicate(timeout=segment_render_timeout_seconds())
-        if process.returncode != 0:
-            logger.warning("Cinematic encode failed: %s", stderr.decode("utf-8", errors="ignore")[-300:])
-            return False
-        return clip_path.exists() and clip_path.stat().st_size > 0
-    except Exception as exc:
-        logger.warning("Cinematic render failed: %s", exc)
-        process.kill()
+
+def _render_cinematic_scene_with_ffmpeg(
+    stock_video_path: Path,
+    clip_path: Path,
+    scene_duration_seconds: float,
+    scene_start_seconds: float,
+    word_timings: list[WordTiming],
+    section_label: str,
+    width: int,
+    height: int,
+    include_subtitles: bool,
+) -> bool:
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_path = clip_path.with_suffix(".ass")
+    filter_chain = _build_video_filter_chain(
+        width=width,
+        height=height,
+        ass_path=ass_path,
+        section_label=section_label,
+        scene_start_seconds=scene_start_seconds,
+        scene_duration_seconds=scene_duration_seconds,
+        word_timings=word_timings,
+        include_subtitles=include_subtitles,
+    )
+    if filter_chain is None:
         return False
+
+    stock_duration = probe_video_duration(stock_video_path)
+    stream_loop = "-1" if stock_duration < scene_duration_seconds else "0"
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-stream_loop",
+        stream_loop,
+        "-i",
+        str(stock_video_path),
+        "-t",
+        f"{scene_duration_seconds:.3f}",
+        "-vf",
+        filter_chain,
+        "-c:v",
+        "libx264",
+        "-preset",
+        ffmpeg_preset(),
+        "-crf",
+        ffmpeg_crf(),
+        "-pix_fmt",
+        "yuv420p",
+        "-an",
+        str(clip_path),
+    ]
+    command = _append_thread_args(command)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=segment_render_timeout_seconds())
+    if result.returncode != 0:
+        logger.warning(
+            "Cinematic ffmpeg failed (subs=%s): %s",
+            include_subtitles,
+            result.stderr[-400:],
+        )
+        return False
+    return clip_path.exists() and clip_path.stat().st_size > 10_000
+
+
+def _build_video_filter_chain(
+    width: int,
+    height: int,
+    ass_path: Path,
+    section_label: str,
+    scene_start_seconds: float,
+    scene_duration_seconds: float,
+    word_timings: list[WordTiming],
+    include_subtitles: bool,
+) -> str | None:
+    filters = [
+        f"scale={width}:{height}:force_original_aspect_ratio=increase",
+        f"crop={width}:{height}",
+        "eq=contrast=1.05:saturation=1.08",
+    ]
+
+    if include_subtitles and word_timings and ffmpeg_supports_filter("ass"):
+        build_scene_ass_subtitles(
+            word_timings,
+            scene_start_seconds,
+            scene_duration_seconds,
+            ass_path,
+            play_res_x=width,
+            play_res_y=height,
+        )
+        if ass_path.exists() and ass_path.stat().st_size > 0:
+            escaped_ass = escape_ffmpeg_path(ass_path)
+            filters.append(f"ass='{escaped_ass}'")
+
+    section_filter = _build_section_label_filter(section_label, width)
+    if section_filter:
+        filters.append(section_filter)
+
+    return ",".join(filters) if filters else None
+
+
+def _build_section_label_filter(section_label: str, width: int) -> str | None:
+    if not ffmpeg_supports_filter("drawtext"):
+        return None
+
+    label = _sanitize_drawtext(section_label.strip()[:42])
+    if not label:
+        return None
+
+    font_path = resolve_drawtext_font_path()
+    font_size = 28 if width >= 1600 else 22
+    if font_path:
+        escaped_font = escape_ffmpeg_path(Path(font_path))
+        return (
+            f"drawtext=fontfile='{escaped_font}':text='{label}':fontsize={font_size}:"
+            "fontcolor=white:x=40:y=36:box=1:boxcolor=black@0.55:boxborderw=12"
+        )
+    return (
+        f"drawtext=text='{label}':fontsize={font_size}:"
+        "fontcolor=white:x=40:y=36:box=1:boxcolor=black@0.55:boxborderw=12"
+    )
+
+
+def _sanitize_drawtext(text: str) -> str:
+    cleaned = text.replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
+    cleaned = re.sub(r"[^\w\s\-&.,!?'\"]+", "", cleaned)
+    return cleaned.strip()
+
+
+def _append_thread_args(command: list[str]) -> list[str]:
+    thread_count = ffmpeg_thread_count()
+    if thread_count <= 0:
+        return command
+    return command[:1] + ["-threads", str(thread_count)] + command[1:]
 
 
 def _count_visible_words(word_timings: list[WordTiming], global_time: float) -> int:
@@ -125,150 +220,3 @@ def _count_visible_words(word_timings: list[WordTiming], global_time: float) -> 
         else:
             break
     return visible
-
-
-def _render_cinematic_frame(
-    stock_video_path: Path,
-    visual_progress: float,
-    section_label: str,
-    narration_words: list[str],
-    visible_word_count: int,
-    width: int,
-    height: int,
-    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
-) -> Image.Image:
-    base_frame = _extract_video_frame(stock_video_path, visual_progress, width, height)
-    if base_frame is None:
-        base_frame = Image.new("RGB", (width, height), (18, 24, 38))
-
-    canvas = base_frame.convert("RGBA")
-    canvas = Image.alpha_composite(canvas, _create_bottom_gradient_overlay(width, height))
-    draw = ImageDraw.Draw(canvas)
-    _draw_section_pill(draw, section_label, font)
-    _draw_bottom_narration_text(draw, narration_words, visible_word_count, width, height, font)
-    return canvas.convert("RGB")
-
-
-def _extract_video_frame(
-    video_path: Path,
-    progress: float,
-    width: int,
-    height: int,
-) -> Image.Image | None:
-    if not video_path.exists():
-        return None
-
-    duration_seconds = probe_video_duration(video_path)
-    if duration_seconds <= 0:
-        return None
-
-    timestamp = min(duration_seconds - 0.05, max(0.0, progress * duration_seconds))
-    try:
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-loglevel",
-                "error",
-                "-ss",
-                f"{timestamp:.3f}",
-                "-i",
-                str(video_path),
-                "-vframes",
-                "1",
-                "-f",
-                "image2pipe",
-                "-vcodec",
-                "png",
-                "pipe:1",
-            ],
-            capture_output=True,
-            check=True,
-            timeout=30,
-        )
-        frame = Image.open(io.BytesIO(result.stdout)).convert("RGBA")
-        fitted = ImageOps.fit(frame, (width, height), method=Image.LANCZOS)
-        enhanced = ImageEnhance.Contrast(fitted).enhance(1.05)
-        enhanced = ImageEnhance.Color(enhanced).enhance(1.06)
-        return enhanced.convert("RGB")
-    except Exception as exc:
-        logger.debug("Stock frame extract failed (%s): %s", video_path.name, exc)
-        return None
-
-
-def _create_bottom_gradient_overlay(width: int, height: int) -> Image.Image:
-    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    gradient_height = int(height * BOTTOM_GRADIENT_RATIO)
-    gradient_top = height - gradient_height
-    for row in range(gradient_top, height):
-        blend = (row - gradient_top) / max(gradient_height - 1, 1)
-        alpha = int(220 * blend**1.15)
-        draw.line([(0, row), (width, row)], fill=(0, 0, 0, alpha))
-    return overlay
-
-
-def _draw_section_pill(
-    draw: ImageDraw.ImageDraw,
-    section_label: str,
-    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
-) -> None:
-    label = section_label.strip()[:42]
-    if not label:
-        return
-    pill_font = font
-    bbox = draw.textbbox((0, 0), label, font=pill_font)
-    text_width = bbox[2] - bbox[0]
-    box_x = 40
-    box_y = 36
-    box_width = text_width + 32
-    draw.rounded_rectangle(
-        [box_x, box_y, box_x + box_width, box_y + 40],
-        radius=10,
-        fill=(0, 0, 0, 170),
-    )
-    draw.text((box_x + 16, box_y + 8), label, fill=(255, 255, 255), font=pill_font)
-
-
-def _draw_bottom_narration_text(
-    draw: ImageDraw.ImageDraw,
-    narration_words: list[str],
-    visible_word_count: int,
-    width: int,
-    height: int,
-    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
-) -> None:
-    visible_words = narration_words[:visible_word_count]
-    if not visible_words:
-        return
-
-    text = " ".join(visible_words)
-    max_width = int(width * 0.88)
-    wrapped_lines = textwrap.wrap(text, width=28)
-    if not wrapped_lines:
-        wrapped_lines = [text[:120]]
-
-    line_height = draw.textbbox((0, 0), "Ag", font=font)[3] + 12
-    total_height = len(wrapped_lines) * line_height
-    start_y = height - int(height * 0.08) - total_height
-
-    for line_index, line in enumerate(wrapped_lines):
-        bbox = draw.textbbox((0, 0), line, font=font)
-        text_width = bbox[2] - bbox[0]
-        x_position = (width - text_width) // 2
-        y_position = start_y + (line_index * line_height)
-        draw.text((x_position + 2, y_position + 2), line, fill=(0, 0, 0), font=font)
-        draw.text((x_position, y_position), line, fill=(255, 255, 255), font=font)
-
-
-def _load_subtitle_font(
-    width: int,
-    font_path: str | None,
-) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    font_size = 52 if width >= 1600 else 40
-    if font_path:
-        try:
-            return ImageFont.truetype(font_path, font_size)
-        except OSError:
-            pass
-    return ImageFont.load_default()

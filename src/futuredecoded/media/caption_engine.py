@@ -43,6 +43,59 @@ def build_ass_subtitles(
     return output_path
 
 
+def slice_word_timings_for_scene(
+    word_timings: list[WordTiming],
+    scene_start_seconds: float,
+    scene_duration_seconds: float,
+) -> list[WordTiming]:
+    """Return word timings shifted to scene-local zero."""
+    if scene_duration_seconds <= 0:
+        return []
+
+    scene_end_seconds = scene_start_seconds + scene_duration_seconds
+    sliced: list[WordTiming] = []
+    for timing in word_timings:
+        if timing.end_seconds <= scene_start_seconds:
+            continue
+        if timing.start_seconds >= scene_end_seconds:
+            break
+        sliced.append(
+            WordTiming(
+                start_seconds=max(0.0, timing.start_seconds - scene_start_seconds),
+                end_seconds=min(
+                    scene_duration_seconds,
+                    timing.end_seconds - scene_start_seconds,
+                ),
+                text=timing.text,
+            )
+        )
+    return sliced
+
+
+def build_scene_ass_subtitles(
+    word_timings: list[WordTiming],
+    scene_start_seconds: float,
+    scene_duration_seconds: float,
+    output_path: Path,
+    play_res_x: int = 1920,
+    play_res_y: int = 1080,
+    words_per_line: int = 6,
+) -> Path:
+    """Build ASS subtitles for one scene window from full-narration word timings."""
+    scene_timings = slice_word_timings_for_scene(
+        word_timings,
+        scene_start_seconds,
+        scene_duration_seconds,
+    )
+    return build_ass_subtitles(
+        scene_timings,
+        output_path,
+        play_res_x=play_res_x,
+        play_res_y=play_res_y,
+        words_per_line=words_per_line,
+    )
+
+
 def build_ass_from_srt(srt_path: Path, ass_path: Path, play_res_x: int = 1920, play_res_y: int = 1080) -> Path:
     if not srt_path.exists():
         return ass_path
