@@ -1,5 +1,7 @@
 name: FutureDecoded Daily Pipeline
 
+# Re-run after cinematic fixes (stock video + Shorts pacing)
+
 on:
   schedule:
     - cron: "30 0 * * *"  # 06:00 IST — finishes before 08:00 publish slot
