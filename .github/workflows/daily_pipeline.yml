@@ -90,6 +90,7 @@ jobs:
           GITHUB_MODELS_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_MODELS_MODEL: openai/gpt-4o-mini
+          GITHUB_MODELS_BASE_URL: https://models.inference.ai.azure.com
           USE_CINEMATIC_RENDERER: "true"
           CINEMATIC_FALLBACK_KEN_BURNS: "false"
           STOCK_VIDEO_PROVIDER: pexels
