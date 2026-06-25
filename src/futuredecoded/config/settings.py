@@ -26,9 +26,8 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
 
     github_models_token: str = ""
-    github_models_model: str = "openai/gpt-4o-mini"
-    # Correct endpoint — models.github.ai redirects but times out in CI
-    github_models_base_url: str = "https://models.inference.ai.azure.com"
+    github_models_model: str = "openai/gpt-4.1"
+    github_models_base_url: str = "https://models.github.ai"
 
     pexels_api_key: str = ""
     pixabay_api_key: str = ""

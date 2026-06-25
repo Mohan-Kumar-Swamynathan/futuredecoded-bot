@@ -87,10 +87,9 @@ jobs:
           CLIENT_SECRETS_BASE64: ${{ secrets.CLIENT_SECRETS_BASE64 }}
           TREND_SCORE_THRESHOLD: 80
           TREND_SCORE_FALLBACK_THRESHOLD: 50
-          GITHUB_MODELS_TOKEN: ${{ github.token }}
+          GITHUB_MODELS_TOKEN: ${{ secrets.GH_PAT_TOKEN || github.token }}
           GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_MODELS_MODEL: openai/gpt-4o-mini
-          GITHUB_MODELS_BASE_URL: https://models.inference.ai.azure.com
+          GITHUB_MODELS_MODEL: openai/gpt-4.1
           USE_CINEMATIC_RENDERER: "true"
           CINEMATIC_FALLBACK_KEN_BURNS: "false"
           STOCK_VIDEO_PROVIDER: pexels

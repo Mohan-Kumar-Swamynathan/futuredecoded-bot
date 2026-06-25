@@ -16,7 +16,7 @@ def test_ci_export_profile_activates_in_github_actions(monkeypatch):
     assert is_ci_build() is True
     assert export_fps() == 24
     assert use_lightweight_motion() is True
-    assert max_scene_count() == 22
+    assert max_scene_count() == 12
     assert max_scene_count(is_short_form=True) == 6
     assert skip_finalize_reencode() is False
 
@@ -53,6 +53,6 @@ def test_calculate_scene_durations_limits_long_form_scene_count_in_ci(monkeypatc
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("USE_CINEMATIC_RENDERER", "true")
     durations = _calculate_scene_durations(198.5)
-    assert len(durations) <= 22
+    assert len(durations) <= 12
     assert max(durations) <= 14.0
     assert round(sum(durations), 1) == 198.5

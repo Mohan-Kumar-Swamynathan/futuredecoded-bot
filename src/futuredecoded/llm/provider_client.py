@@ -12,7 +12,7 @@ import requests
 
 logger = logging.getLogger("futuredecoded.llm")
 
-GITHUB_MODELS_DEFAULT_MODEL = "openai/gpt-4o-mini"
+GITHUB_MODELS_DEFAULT_MODEL = "openai/gpt-4.1"
 GITHUB_MODELS_DEFAULT_BASE_URL = "https://models.github.ai"
 
 
@@ -158,6 +158,7 @@ class ProviderClient:
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
                 "Content-Type": "application/json",
+                "X-GitHub-Api-Version": "2022-11-28",
             },
             json=payload,
             timeout=90,

@@ -58,7 +58,7 @@ def test_call_github_models_sends_correct_request(mock_post: MagicMock):
     mock_post.assert_called_once()
     call_kwargs = mock_post.call_args.kwargs
     assert call_kwargs["headers"]["Authorization"] == "Bearer ghp_test"
-    assert call_kwargs["json"]["model"] == "openai/gpt-4o-mini"
+    assert call_kwargs["json"]["model"] == "openai/gpt-4.1"
     assert call_kwargs["json"]["response_format"] == {"type": "json_object"}
     assert mock_post.call_args.args[0] == "https://models.github.ai/inference/chat/completions"
 
