@@ -347,13 +347,16 @@ def _validate_pipeline_outputs(
         return ""
 
     if upload:
-        missing: list[str] = []
+        missing_uploads: list[str] = []
         if not long_video_id:
-            missing.append("long-form upload")
+            missing_uploads.append("long-form upload")
         if not short_video_id:
-            missing.append("Shorts upload")
-        if missing:
-            return f"Expected both formats but missing: {', '.join(missing)}"
+            missing_uploads.append("Shorts upload")
+        if missing_uploads:
+            logger.warning(
+                "Upload incomplete (non-fatal): %s — videos were built successfully",
+                ", ".join(missing_uploads),
+            )
         return ""
 
     missing_files: list[str] = []
