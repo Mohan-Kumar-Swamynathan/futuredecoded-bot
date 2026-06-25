@@ -27,7 +27,8 @@ class Settings(BaseSettings):
 
     github_models_token: str = ""
     github_models_model: str = "openai/gpt-4o-mini"
-    github_models_base_url: str = "https://models.github.ai"
+    # Correct endpoint — models.github.ai redirects but times out in CI
+    github_models_base_url: str = "https://models.inference.ai.azure.com"
 
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
@@ -85,3 +86,4 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     return Settings()
+
