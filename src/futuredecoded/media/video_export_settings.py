@@ -35,7 +35,7 @@ def ffmpeg_thread_count() -> int:
 
 def max_scene_duration_seconds(is_short_form: bool = False) -> float:
     if use_cinematic_export_profile():
-        return 9.0 if is_short_form else 14.0
+        return 9.0 if is_short_form else 18.0
     return 30.0 if is_ci_build() else 5.0
 
 

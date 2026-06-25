@@ -94,13 +94,32 @@ jobs:
           CINEMATIC_FALLBACK_KEN_BURNS: "false"
           STOCK_VIDEO_PROVIDER: pexels
         run: |
+          UPLOAD_FLAG=""
           if [ -n "$YOUTUBE_TOKEN_BASE64" ] && [ -n "$CLIENT_SECRETS_BASE64" ]; then
-            echo "YouTube credentials found — running with upload"
-            python -m futuredecoded.main --daily --upload
+            if python3 scripts/validate_youtube_token.py; then
+              UPLOAD_FLAG="--upload"
+              echo "YouTube token valid — uploading"
+            else
+              echo "::warning::YouTube token invalid — generating without upload"
+            fi
           else
-            echo "YouTube credentials missing — running dry-run (no upload)"
-            python -m futuredecoded.main --daily --dry-run
+            echo "YouTube credentials missing — dry-run (no upload)"
           fi
+          python -m futuredecoded.main --daily $UPLOAD_FLAG
+
+      - name: Upload pipeline artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-output-${{ github.run_id }}
+          path: |
+            outputs/**/*.mp4
+            outputs/**/*.jpg
+            outputs/**/*.json
+            outputs/**/*.txt
+          retention-days: 7
+          if-no-files-found: ignore
+          compression-level: 9
 
       - name: Upload debug artifacts on failure
         if: failure()

@@ -35,10 +35,11 @@ def test_merge_scene_durations_to_limit_reduces_scene_count():
     assert max(merged) <= 10.0
 
 
-def test_merge_scene_durations_keeps_scenes_when_even_split_exceeds_cap():
+def test_merge_scene_durations_keeps_scene_cap_when_even_split_exceeds_max():
     durations = [4.0, 4.0, 4.0, 4.0, 4.0, 4.0]
     merged = _merge_scene_durations_to_limit(durations, scene_limit=3, max_scene_seconds=5.0)
-    assert len(merged) == 6
+    assert len(merged) == 3
+    assert round(sum(merged), 2) == round(sum(durations), 2)
 
 
 def test_calculate_scene_durations_caps_scene_count_for_shorts_in_ci(monkeypatch):
@@ -54,5 +55,5 @@ def test_calculate_scene_durations_limits_long_form_scene_count_in_ci(monkeypatc
     monkeypatch.setenv("USE_CINEMATIC_RENDERER", "true")
     durations = _calculate_scene_durations(198.5)
     assert len(durations) <= 12
-    assert max(durations) <= 14.0
+    assert max(durations) <= 18.0
     assert round(sum(durations), 1) == 198.5

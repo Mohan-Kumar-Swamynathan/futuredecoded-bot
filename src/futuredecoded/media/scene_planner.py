@@ -165,14 +165,14 @@ def _merge_scene_durations_to_limit(
 
     total_seconds = sum(durations)
     even_duration = total_seconds / scene_limit
+    target_duration = round(min(even_duration, max_scene_seconds), 2)
     if even_duration > max_scene_seconds:
-        return durations
+        target_duration = round(even_duration, 2)
 
-    capped_duration = round(min(even_duration, max_scene_seconds), 2)
-    merged = [capped_duration] * scene_limit
-    merged[-1] = round(total_seconds - (capped_duration * (scene_limit - 1)), 2)
+    merged = [target_duration] * scene_limit
+    merged[-1] = round(total_seconds - (target_duration * (scene_limit - 1)), 2)
     if merged[-1] <= 0:
-        merged[-1] = capped_duration
+        merged[-1] = target_duration
     return merged
 
 
