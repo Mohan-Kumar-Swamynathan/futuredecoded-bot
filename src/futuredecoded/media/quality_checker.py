@@ -7,8 +7,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from futuredecoded.media.video_export_settings import max_scene_duration_seconds
-from futuredecoded.media.video_export_settings import require_burned_captions, run_black_frame_detection
+from futuredecoded.media.video_export_settings import (
+    max_scene_duration_seconds,
+    require_burned_captions,
+    run_black_frame_detection,
+    use_cinematic_export_profile,
+)
 
 logger = logging.getLogger("futuredecoded.media.quality")
 
@@ -33,10 +37,11 @@ def validate_video_output(
     if require_burned_captions() and caption_path is not None and not caption_path.exists():
         issues.append("Captions missing")
 
-    max_allowed_scene_seconds = max_scene_duration_seconds(is_short_form=is_short_form) + 0.01
-    for index, duration in enumerate(scene_durations):
-        if duration > max_allowed_scene_seconds:
-            issues.append(f"Scene {index + 1} exceeds limit ({duration:.1f}s)")
+    if not use_cinematic_export_profile():
+        max_allowed_scene_seconds = max_scene_duration_seconds(is_short_form=is_short_form) + 0.01
+        for index, duration in enumerate(scene_durations):
+            if duration > max_allowed_scene_seconds:
+                issues.append(f"Scene {index + 1} exceeds limit ({duration:.1f}s)")
 
     if video_path.exists() and not _has_audio_stream(video_path):
         issues.append("Video has no audio stream")

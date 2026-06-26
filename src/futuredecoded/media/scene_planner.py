@@ -164,10 +164,9 @@ def _merge_scene_durations_to_limit(
         return durations
 
     total_seconds = sum(durations)
-    even_duration = total_seconds / scene_limit
-    target_duration = round(min(even_duration, max_scene_seconds), 2)
-    if even_duration > max_scene_seconds:
-        target_duration = round(even_duration, 2)
+    # CI caps scene count for encode time; longer per-scene cuts are expected when
+    # total narration exceeds scene_limit * max_scene_seconds.
+    target_duration = round(total_seconds / scene_limit, 2)
 
     merged = [target_duration] * scene_limit
     merged[-1] = round(total_seconds - (target_duration * (scene_limit - 1)), 2)

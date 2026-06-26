@@ -22,6 +22,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Verify Python syntax
         run: python -m compileall -q src/futuredecoded
@@ -39,6 +41,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core fontconfig
@@ -90,6 +94,7 @@ jobs:
           GITHUB_MODELS_TOKEN: ${{ secrets.GH_PAT_TOKEN || github.token }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_MODELS_MODEL: openai/gpt-4.1
+          LLM_PROVIDER_ORDER: github_models,groq,gemini
           USE_CINEMATIC_RENDERER: "true"
           CINEMATIC_FALLBACK_KEN_BURNS: "false"
           STOCK_VIDEO_PROVIDER: pexels
