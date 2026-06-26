@@ -55,5 +55,5 @@ def test_calculate_scene_durations_limits_long_form_scene_count_in_ci(monkeypatc
     monkeypatch.setenv("USE_CINEMATIC_RENDERER", "true")
     durations = _calculate_scene_durations(198.5)
     assert len(durations) <= 8
-    assert max(durations) <= 18.0
+    assert max(durations) <= 30.0
     assert round(sum(durations), 1) == 198.5

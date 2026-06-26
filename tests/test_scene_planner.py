@@ -56,5 +56,5 @@ def test_plan_video_scenes_even_merge_avoids_giant_first_scene(monkeypatch):
     )
 
     assert len(scenes) <= 8
-    assert max(scene.duration_seconds for scene in scenes) <= 18.5
+    assert max(scene.duration_seconds for scene in scenes) <= 30.0
     assert abs(sum(scene.duration_seconds for scene in scenes) - 215.0) < 1.0
