@@ -21,6 +21,8 @@ def test_ci_export_profile_activates_in_github_actions(monkeypatch):
     assert max_scene_count() == 8
     assert max_scene_count(is_short_form=True) == 6
     assert skip_finalize_reencode() is True
+    assert parallel_segment_workers() == 2
+    assert stock_fetch_parallel_workers() == 3
 
 
 def test_ci_ken_burns_profile_keeps_scene_cap(monkeypatch):

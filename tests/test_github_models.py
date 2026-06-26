@@ -77,3 +77,28 @@ def test_call_github_models_plain_text_omits_json_format(mock_post: MagicMock):
 
     assert result == "Hello world"
     assert "response_format" not in mock_post.call_args.kwargs["json"]
+
+
+def test_call_json_falls_back_when_provider_returns_invalid_json(monkeypatch):
+    client = ProviderClient(
+        gemini_key="",
+        groq_key="",
+        github_models_token="ghp_test",
+    )
+    client._providers = ["bad_provider", "good_provider"]
+
+    def fake_dispatch(provider: str, prompt: str, max_tokens: int) -> str:
+        if provider == "bad_provider":
+            return '{"title": "broken"'
+        return '{"title": "Future of AI", "script_long": "word " * 700}'
+
+    monkeypatch.setattr(client, "_dispatch", fake_dispatch)
+    result = client.call_json("Generate script JSON")
+    assert result["title"] == "Future of AI"
+
+
+def test_parse_json_response_extracts_embedded_object():
+    from futuredecoded.llm.provider_client import _parse_json_response
+
+    payload = _parse_json_response('Here is the payload:\n{"ok": true}\nThanks')
+    assert payload == {"ok": True}

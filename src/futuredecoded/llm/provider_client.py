@@ -20,6 +20,31 @@ def _strip_json_fences(text: str) -> str:
     return re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
 
 
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        payload = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _parse_json_response(raw: str) -> dict[str, Any]:
+    cleaned = _strip_json_fences(raw)
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        payload = _extract_json_object(cleaned)
+        if payload is None:
+            raise exc
+    if not isinstance(payload, dict):
+        raise json.JSONDecodeError("Expected JSON object", cleaned, 0)
+    return payload
+
+
 class ProviderClient:
     """Gemini → Groq → GitHub Models → OpenRouter → OpenAI → Ollama."""
 
@@ -99,13 +124,29 @@ class ProviderClient:
                 logger.warning("LLM provider %s failed: %s", provider, str(exc)[:200])
         raise RuntimeError("All LLM providers failed: " + "; ".join(errors[:4]))
 
-    def call_json(self, prompt: str) -> dict[str, Any]:
+    def call_json(self, prompt: str, max_tokens: int = 4096) -> dict[str, Any]:
         json_prompt = (
             prompt + "\n\nRespond ONLY with valid JSON. No markdown fences."
         )
-        raw = self.call(json_prompt)
-        cleaned = _strip_json_fences(raw)
-        return json.loads(cleaned)
+        errors: list[str] = []
+        for provider in self._providers:
+            if provider in self._disabled_providers:
+                continue
+            try:
+                logger.info("LLM JSON attempt: provider=%s", provider)
+                raw = self._dispatch(provider, json_prompt, max_tokens)
+                parsed = _parse_json_response(raw)
+                logger.info("LLM JSON success: provider=%s", provider)
+                return parsed
+            except json.JSONDecodeError as exc:
+                errors.append(f"{provider}: invalid JSON ({exc})")
+                logger.warning("LLM provider %s returned invalid JSON", provider)
+                continue
+            except Exception as exc:
+                self._disable_provider(provider, exc)
+                errors.append(f"{provider}: {exc}")
+                logger.warning("LLM JSON provider %s failed: %s", provider, str(exc)[:200])
+        raise RuntimeError("All LLM providers failed JSON: " + "; ".join(errors[:4]))
 
     def _dispatch(self, provider: str, prompt: str, max_tokens: int) -> str:
         if provider == "gemini":
@@ -132,11 +173,14 @@ class ProviderClient:
     def _call_groq(self, prompt: str, max_tokens: int) -> str:
         from groq import Groq
         client = Groq(api_key=self.groq_key)
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-        )
+        request_kwargs: dict[str, Any] = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+        }
+        if "respond only with valid json" in prompt.lower():
+            request_kwargs["response_format"] = {"type": "json_object"}
+        resp = client.chat.completions.create(**request_kwargs)
         return resp.choices[0].message.content
 
     def _call_github_models(self, prompt: str, max_tokens: int) -> str:

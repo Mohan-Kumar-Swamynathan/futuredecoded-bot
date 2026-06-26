@@ -92,7 +92,7 @@ jobs:
           GITHUB_MODELS_TOKEN: ${{ secrets.GH_PAT_TOKEN || github.token }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_MODELS_MODEL: openai/gpt-4.1
-          LLM_PROVIDER_ORDER: github_models,groq,gemini
+          LLM_PROVIDER_ORDER: github_models,gemini,groq
           USE_CINEMATIC_RENDERER: "true"
           CINEMATIC_FALLBACK_KEN_BURNS: "false"
           STOCK_VIDEO_PROVIDER: pexels
