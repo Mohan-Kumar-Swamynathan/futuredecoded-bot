@@ -19,6 +19,7 @@ def test_attach_stock_videos_to_scenes_preserves_duration(monkeypatch, tmp_path)
     from futuredecoded.media.scene_planner import VideoScene
 
     monkeypatch.setattr(stock_video_collector, "fetch_scene_stock_video", lambda *args, **kwargs: None)
+    monkeypatch.setattr(stock_video_collector, "stock_fetch_parallel_workers", lambda: 1)
     scenes = [
         VideoScene(
             section_label="Hook",

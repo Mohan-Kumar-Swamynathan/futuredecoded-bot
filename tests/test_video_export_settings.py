@@ -5,7 +5,9 @@ from futuredecoded.media.video_export_settings import (
     export_fps,
     is_ci_build,
     max_scene_count,
+    parallel_segment_workers,
     skip_finalize_reencode,
+    stock_fetch_parallel_workers,
     use_lightweight_motion,
 )
 

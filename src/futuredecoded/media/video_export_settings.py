@@ -100,8 +100,12 @@ def max_scene_count(is_short_form: bool = False) -> int | None:
 
 def parallel_segment_workers() -> int:
     if use_cinematic_export_profile():
-        return 1
+        return 2
     return 3 if is_ci_build() else 1
+
+
+def stock_fetch_parallel_workers() -> int:
+    return 3 if is_ci_build() else 2
 
 
 def segment_render_timeout_seconds() -> int:

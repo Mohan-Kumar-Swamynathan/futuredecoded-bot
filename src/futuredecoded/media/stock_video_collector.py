@@ -8,11 +8,13 @@ import logging
 import subprocess
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from futuredecoded.config.settings import get_settings
 from futuredecoded.config.visual_style import VisualStyle
 from futuredecoded.media.scene_visual_planner import SceneVisualPlan
+from futuredecoded.media.video_export_settings import stock_fetch_parallel_workers
 from futuredecoded.media.visual_keywords import score_video_tag_relevance
 
 logger = logging.getLogger(__name__)
@@ -103,10 +105,37 @@ def attach_stock_videos_to_scenes(
     if not visual_plans:
         return scenes
 
+    worker_count = min(stock_fetch_parallel_workers(), len(scenes))
+    stock_paths: dict[int, Path | None] = {}
+
+    if worker_count <= 1:
+        for index, scene in enumerate(scenes):
+            plan = _resolve_visual_plan_for_scene(scene, visual_plans, index)
+            stock_paths[index] = fetch_scene_stock_video(plan, index, width, height)
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(
+                    fetch_scene_stock_video,
+                    _resolve_visual_plan_for_scene(scene, visual_plans, index),
+                    index,
+                    width,
+                    height,
+                ): index
+                for index, scene in enumerate(scenes)
+            }
+            for future in as_completed(futures):
+                scene_index = futures[future]
+                try:
+                    stock_paths[scene_index] = future.result()
+                except Exception as exc:
+                    logger.warning("Stock fetch failed for scene %d: %s", scene_index + 1, exc)
+                    stock_paths[scene_index] = None
+
     updated_scenes: list[VideoScene] = []
     for index, scene in enumerate(scenes):
         plan = _resolve_visual_plan_for_scene(scene, visual_plans, index)
-        stock_video_path = fetch_scene_stock_video(plan, index, width, height)
+        stock_video_path = stock_paths.get(index)
         updated_scenes.append(
             VideoScene(
                 section_label=scene.section_label,
@@ -132,9 +161,11 @@ def _resolve_visual_plan_for_scene(
     scene_index: int,
 ) -> SceneVisualPlan:
     section_label = str(getattr(scene, "section_label", "")).strip().lower()
-    for plan in visual_plans:
-        if plan.section_label.strip().lower() == section_label:
-            return plan
+    matching_plans = [
+        plan for plan in visual_plans if plan.section_label.strip().lower() == section_label
+    ]
+    if matching_plans:
+        return matching_plans[scene_index % len(matching_plans)]
     return visual_plans[scene_index % len(visual_plans)]
 
 
@@ -224,13 +255,21 @@ def _search_pexels_video_url(
     if not videos:
         return None
 
-    relevance_text = image_search_prompt.strip() or query
+    relevance_text = " ".join(
+        part.strip()
+        for part in (image_search_prompt, visual_plan.section_text[:160])
+        if part and part.strip()
+    ) or query
     if relevance_text and len(videos) > 1:
         ranked = sorted(
             videos,
             key=lambda video: score_video_tag_relevance(
                 relevance_text,
-                str(video.get("url", "")) + " " + " ".join(video.get("tags", []) or []),
+                str(video.get("url", ""))
+                + " "
+                + " ".join(video.get("tags", []) or [])
+                + " "
+                + str(video.get("user", {}).get("name", "")),
             ),
             reverse=True,
         )
@@ -274,7 +313,11 @@ def _search_pixabay_video_url(
     if not hits:
         return None
 
-    relevance_text = image_search_prompt.strip() or query
+    relevance_text = " ".join(
+        part.strip()
+        for part in (image_search_prompt, query)
+        if part and part.strip()
+    )
     if relevance_text and len(hits) > 1:
         ranked = sorted(
             hits,

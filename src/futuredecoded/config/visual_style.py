@@ -55,7 +55,24 @@ def classify_section_visual_style(section_label: str, section_text: str) -> Visu
     return VisualStyle.REAL_FOOTAGE
 
 
-def style_query_suffix(visual_style: VisualStyle) -> str:
+def style_query_suffix(visual_style: VisualStyle, section_label: str = "") -> str:
+    """Return a short English modifier that keeps stock searches topic-specific."""
+    label = section_label.lower().strip()
     if visual_style == VisualStyle.MOTION_GRAPHICS:
-        return "digital technology animation"
-    return "technology business"
+        if "hook" in label:
+            return "technology news headline"
+        if "technical" in label:
+            return "data center server technology"
+        if "industry" in label or "impact" in label:
+            return "corporate business technology"
+        if "take" in label or "opinion" in label:
+            return "team discussion technology office"
+        return "technology innovation"
+
+    if "context" in label or "background" in label:
+        return "news documentary footage"
+    if "happened" in label or "story" in label:
+        return "breaking news report"
+    if "resolution" in label or "outcome" in label:
+        return "business success professional"
+    return "professional business"

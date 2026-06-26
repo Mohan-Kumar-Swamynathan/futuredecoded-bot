@@ -80,6 +80,7 @@ def _build_entity_queries(title_tokens: list[str]) -> list[str]:
         ],
         "openai": ["ChatGPT interface", "AI neural network", "developer coding AI"],
         "anthropic": ["AI safety research lab", "artificial intelligence server room", "AI ethics technology"],
+        "alibaba": ["Alibaba corporate technology office", "ecommerce technology business"],
         "google": ["Google Gemini AI", "Android technology", "data center cloud computing"],
         "gemini": ["Google Gemini AI interface", "AI assistant technology"],
         "claude": ["AI assistant interface", "enterprise AI software"],
@@ -157,7 +158,8 @@ def build_section_visual_prompt(
         tokens = title_tokens[:6]
 
     suffix = style_query_suffix(
-        VisualStyle.MOTION_GRAPHICS if visual_style == "motion_graphics" else VisualStyle.REAL_FOOTAGE
+        VisualStyle.MOTION_GRAPHICS if visual_style == "motion_graphics" else VisualStyle.REAL_FOOTAGE,
+        section_label=section_label,
     )
     core_phrase = " ".join(tokens[:6]).strip()
     if core_phrase:
@@ -190,7 +192,8 @@ def build_section_search_keywords(
         keywords.append(" ".join(section_tokens[:4]))
     keywords.extend(_build_entity_queries(_tokenize(story_title) + section_tokens)[:2])
     suffix = style_query_suffix(
-        VisualStyle.MOTION_GRAPHICS if visual_style == "motion_graphics" else VisualStyle.REAL_FOOTAGE
+        VisualStyle.MOTION_GRAPHICS if visual_style == "motion_graphics" else VisualStyle.REAL_FOOTAGE,
+        section_label=section_label,
     )
     keywords.append(f"{prompt.split()[0]} {suffix}".strip())
 
