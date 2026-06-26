@@ -80,8 +80,7 @@ def use_concat_stream_copy() -> bool:
 
 
 def skip_finalize_reencode() -> bool:
-    if use_cinematic_export_profile():
-        return False
+    """Skip watermark/caption burn in CI — full re-encode OOMs on long-form stock video."""
     return is_ci_build()
 
 
@@ -95,7 +94,7 @@ def require_burned_captions() -> bool:
 
 def max_scene_count(is_short_form: bool = False) -> int | None:
     if use_cinematic_export_profile():
-        return 6 if is_short_form else 12
+        return 6 if is_short_form else 8
     return 12 if is_ci_build() else None
 
 
