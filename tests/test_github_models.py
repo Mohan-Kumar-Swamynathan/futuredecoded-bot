@@ -80,17 +80,23 @@ def test_call_github_models_plain_text_omits_json_format(mock_post: MagicMock):
 
 
 def test_call_json_falls_back_when_provider_returns_invalid_json(monkeypatch):
+    import json as json_module
+
     client = ProviderClient(
         gemini_key="",
         groq_key="",
         github_models_token="ghp_test",
     )
     client._providers = ["bad_provider", "good_provider"]
+    valid_payload = {
+        "title": "Future of AI",
+        "script_long": "word " * 700,
+    }
 
     def fake_dispatch(provider: str, prompt: str, max_tokens: int) -> str:
         if provider == "bad_provider":
             return '{"title": "broken"'
-        return '{"title": "Future of AI", "script_long": "word " * 700}'
+        return json_module.dumps(valid_payload)
 
     monkeypatch.setattr(client, "_dispatch", fake_dispatch)
     result = client.call_json("Generate script JSON")
